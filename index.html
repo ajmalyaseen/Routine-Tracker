@@ -246,7 +246,7 @@
         <div>
           <label class="block text-[11px] font-medium text-zinc-400 mb-1.5">Date</label>
           <div class="flex items-center gap-2">
-            <input type="date" id="inputDate" required class="flex-1 px-3.5 py-2 rounded-xl bg-zinc-950 border border-zinc-800 text-xs text-white focus:outline-none focus:border-brand-500 font-mono">
+            <input type="date" id="inputDate" onchange="handleDateInputChange()" required class="flex-1 px-3.5 py-2 rounded-xl bg-zinc-950 border border-zinc-800 text-xs text-white focus:outline-none focus:border-brand-500 font-mono">
             <button type="button" onclick="setAddFormDate('today')" class="px-3 py-2 rounded-xl bg-zinc-950 border border-zinc-800 hover:bg-zinc-850 text-zinc-300 text-xs font-semibold transition">
               Today
             </button>
@@ -515,22 +515,6 @@
       console.warn("Supabase initialization error:", e);
     }
 
-    // DEFAULT SCHEDULE FALLBACK
-    const DEFAULT_ROUTINES = [
-      { id: 'rt-1', time: '06:00 AM - 06:45 AM', title: 'Wakeup, Hydrate & Light Workout', category: 'Routine', done: false },
-      { id: 'rt-2', time: '06:45 AM - 08:30 AM', title: 'Deep Work: SQL Mastery (Window Functions & CTEs)', category: 'SQL', done: false },
-      { id: 'rt-3', time: '08:30 AM - 09:15 AM', title: 'Healthy Breakfast & Energy Break', category: 'Routine', done: false },
-      { id: 'rt-4', time: '09:15 AM - 11:45 AM', title: 'Core Machine Learning & Math Foundation', category: 'ML', done: false },
-      { id: 'rt-5', time: '11:45 AM - 12:45 PM', title: 'Interview Prep: DSA & System Design', category: 'Interview', done: false },
-      { id: 'rt-6', time: '12:45 PM - 01:45 PM', title: 'Lunch & 20m Power Rest', category: 'Routine', done: false },
-      { id: 'rt-7', time: '01:45 PM - 04:15 PM', title: 'Generative AI, LLMs & RAG Engineering', category: 'GenAI', done: false },
-      { id: 'rt-8', time: '04:15 PM - 04:45 PM', title: 'Evening Walk & Screen Break', category: 'Routine', done: false },
-      { id: 'rt-9', time: '04:45 PM - 06:45 PM', title: 'Hands-on Portfolio Project & GitHub Commits', category: 'Project', done: false },
-      { id: 'rt-10', time: '06:45 PM - 07:45 PM', title: 'Daily Revision & Flashcards', category: 'Interview', done: false },
-      { id: 'rt-11', time: '07:45 PM - 09:30 PM', title: 'Dinner & Relaxation', category: 'Routine', done: false },
-      { id: 'rt-12', time: '09:30 PM - 10:00 PM', title: 'Habit Audit & 8h Sleep', category: 'Routine', done: false }
-    ];
-
     // TIMEZONE-SAFE LOCAL DATE HELPERS
     function formatLocalDate(d) {
       if (!d) d = new Date();
@@ -548,6 +532,38 @@
       if (!dateStr) return new Date();
       const [y, m, d] = dateStr.split('-').map(Number);
       return new Date(y, m - 1, d, 12, 0, 0); // 12:00 noon avoids timezone boundary shifts
+    }
+
+    // PURGE INBUILT SAMPLE TASKS (ONLY USER-CREATED TASKS ARE ALLOWED)
+    const SAMPLE_TITLES = new Set([
+      'Wakeup, Hydrate & Light Workout',
+      'Deep Work: SQL Mastery (Window Functions & CTEs)',
+      'Healthy Breakfast & Energy Break',
+      'Core Machine Learning & Math Foundation',
+      'Interview Prep: DSA & System Design',
+      'Lunch & 20m Power Rest',
+      'Generative AI, LLMs & RAG Engineering',
+      'Evening Walk & Screen Break',
+      'Hands-on Portfolio Project & GitHub Commits',
+      'Daily Revision & Flashcards',
+      'Dinner & Relaxation',
+      'Habit Audit & 8h Sleep'
+    ]);
+
+    function purgeInbuiltTasks(routines) {
+      if (!Array.isArray(routines)) return [];
+      return routines.filter(r => {
+        if (!r || !r.title) return false;
+        if (SAMPLE_TITLES.has(r.title)) return false;
+        if (/^rt-\d+$/.test(r.id) && parseInt(r.id.replace('rt-', ''), 10) <= 12) return false;
+        return true;
+      });
+    }
+
+    function cleanAllStoredRoutines() {
+      Object.keys(routinesByDate).forEach(date => {
+        routinesByDate[date] = purgeInbuiltTasks(routinesByDate[date]);
+      });
     }
 
     // STATE
@@ -568,17 +584,10 @@
     let focusTimerInterval = null;
     let focusTimerRunning = false;
 
+    // ONLY RETURN USER-ADDED TASKS (NO INBUILT SAMPLE TASKS)
     function getRoutinesForDate(dateKey) {
       if (!routinesByDate[dateKey]) {
-        if (dateKey === todayDate) {
-          routinesByDate[dateKey] = JSON.parse(JSON.stringify(DEFAULT_ROUTINES));
-        } else {
-          routinesByDate[dateKey] = DEFAULT_ROUTINES.map(r => ({
-            ...r,
-            id: `rt-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-            done: false
-          }));
-        }
+        routinesByDate[dateKey] = [];
       }
       return routinesByDate[dateKey];
     }
@@ -643,6 +652,7 @@
           }
         } catch (e) {}
       }
+      cleanAllStoredRoutines();
       getRoutinesForDate(todayDate);
     }
 
@@ -931,6 +941,7 @@
           if (data.state.streak) streakCount = data.state.streak;
           if (data.state.bestStreak) bestStreakCount = data.state.bestStreak;
 
+          cleanAllStoredRoutines();
           saveLocal();
           updateDateUI();
           render();
@@ -959,6 +970,7 @@
               if (payload.new.state.notes) dailyNotes = payload.new.state.notes;
               if (payload.new.state.streak) streakCount = payload.new.state.streak;
               if (payload.new.state.bestStreak) bestStreakCount = payload.new.state.bestStreak;
+              cleanAllStoredRoutines();
               saveLocal();
               updateDateUI();
               render();
@@ -1160,16 +1172,70 @@
       });
     }
 
+    function handleDateInputChange() {
+      const input = document.getElementById('inputDate');
+      if (!input) return;
+      if (input.value < todayDate) {
+        alert("⚠️ Cannot add routines for past dates. Reverting to Today.");
+        input.value = todayDate;
+      }
+      updateTimePreview();
+    }
+
     function handleCreateRoutine(e) {
       e.preventDefault();
-      const dateVal = document.getElementById('inputDate').value || selectedDate;
-      const startVal = document.getElementById('inputStartTime').value;
-      const endVal = document.getElementById('inputEndTime').value;
-      const title = document.getElementById('inputTitle').value.trim();
-      const tag = document.getElementById('inputTag').value.trim() || 'General';
+      const dateInput = document.getElementById('inputDate');
+      const dateVal = dateInput.value || selectedDate;
+      const startEl = document.getElementById('inputStartTime');
+      const endEl = document.getElementById('inputEndTime');
+      const titleInput = document.getElementById('inputTitle');
+      const tagInput = document.getElementById('inputTag');
 
-      if (!title) return;
-      const formattedTime = (startVal && endVal) ? `${formatTime12h(startVal)} - ${formatTime12h(endVal)}` : '08:00 AM - 09:00 AM';
+      const startVal = startEl ? startEl.value : '';
+      const endVal = endEl ? endEl.value : '';
+      const title = titleInput ? titleInput.value.trim() : '';
+      const tag = tagInput ? tagInput.value.trim() || 'General' : 'General';
+
+      if (!title) {
+        alert("⚠️ Please enter a title for this routine.");
+        return;
+      }
+
+      // 1. DATE RESTRICTION: Disallow past dates
+      if (dateVal < todayDate) {
+        alert("⚠️ Cannot schedule routines in the past. Please select today or a future date.");
+        dateInput.value = todayDate;
+        return;
+      }
+
+      // 2. TIME RESTRICTION: Disallow past times if scheduling for Today
+      if (!startVal || !endVal) {
+        alert("⚠️ Please specify both start time and end time.");
+        return;
+      }
+
+      const [sH, sM] = startVal.split(':').map(Number);
+      const [eH, eM] = endVal.split(':').map(Number);
+      const slotStartMinutes = sH * 60 + sM;
+      const slotEndMinutes = eH * 60 + eM;
+
+      if (dateVal === todayDate) {
+        const now = new Date();
+        const currentMinutes = now.getHours() * 60 + now.getMinutes();
+        if (slotStartMinutes < currentMinutes) {
+          const currentFormatted = formatTime12h(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
+          alert(`⚠️ Past time is not allowed! Current time is ${currentFormatted}. Please select an upcoming start time.`);
+          return;
+        }
+      }
+
+      // 3. End time must be strictly after start time
+      if (slotEndMinutes <= slotStartMinutes) {
+        alert("⚠️ End time must be after the start time.");
+        return;
+      }
+
+      const formattedTime = `${formatTime12h(startVal)} - ${formatTime12h(endVal)}`;
 
       const listForDate = getRoutinesForDate(dateVal);
       listForDate.push({
@@ -1184,7 +1250,7 @@
       selectedDate = dateVal;
       
       // Reset form & close
-      document.getElementById('inputTitle').value = '';
+      titleInput.value = '';
       toggleAddForm();
 
       saveLocal();
@@ -1604,7 +1670,28 @@
       form.classList.toggle('hidden');
       if (!form.classList.contains('hidden')) {
         const dateInput = document.getElementById('inputDate');
-        if (dateInput) dateInput.value = selectedDate;
+        if (dateInput) {
+          dateInput.min = todayDate;
+          dateInput.value = (selectedDate < todayDate) ? todayDate : selectedDate;
+        }
+
+        // Set realistic upcoming time slots
+        const now = new Date();
+        let startH = now.getHours();
+        let startM = now.getMinutes() >= 30 ? 60 : 30;
+        if (startM === 60) {
+          startH = (startH + 1) % 24;
+          startM = 0;
+        }
+        let endH = (startH + 1) % 24;
+        let endM = startM;
+        const pad = n => String(n).padStart(2, '0');
+
+        const startEl = document.getElementById('inputStartTime');
+        const endEl = document.getElementById('inputEndTime');
+        if (startEl) startEl.value = `${pad(startH)}:${pad(startM)}`;
+        if (endEl) endEl.value = `${pad(endH)}:${pad(endM)}`;
+
         updateTimePreview();
         const titleInput = document.getElementById('inputTitle');
         if (titleInput) titleInput.focus();
@@ -1622,11 +1709,14 @@
         }
 
         loadLocal();
+        cleanAllStoredRoutines();
+        saveLocal();
         updateDateUI();
         updateNotifButtonUI();
         render();
         renderCalendarStrip();
         updateProgress();
+        pushToSupabase();
         pullFromSupabase();
         subscribeToRealtime();
         setInterval(checkSlotReminders, 30000);
