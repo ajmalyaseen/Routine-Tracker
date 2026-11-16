@@ -16,7 +16,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
-// Date helper: gets YYYY-MM-DD in user's timezone (IST Asia/Kolkata default)
+// Date helper: gets YYYY-MM-DD in IST timezone
 function getTodayDate(): string {
   try {
     return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
@@ -47,40 +47,61 @@ function resolveTargetDate(inputDate?: string, fallbackDate?: string): string {
   return base;
 }
 
+function parseTimeToMinutes(timeStr: string): number | null {
+  try {
+    const clean = timeStr.trim().replace(/\s*\([^)]*\)/g, "").trim();
+    const parts = clean.split(" ");
+    const [h, m] = parts[0].split(":").map(Number);
+    const ampm = (parts[1] || "").toUpperCase();
+    let hours = h;
+    if (ampm === "PM" && hours < 12) hours += 12;
+    if (ampm === "AM" && hours === 12) hours = 0;
+    return hours * 60 + (m || 0);
+  } catch (_) {
+    return null;
+  }
+}
+
+function getISTMinutes(): number {
+  const now = new Date();
+  const utcMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+  return (utcMinutes + 330) % 1440; // UTC + 5:30
+}
+
 // Available MCP Tools
 const TOOLS = [
   {
     name: "get_routines",
-    description: "Fetch the user's daily routine schedule and completion status for today, tomorrow, or a specific date.",
+    description: "Fetch user daily routines and completion status. Supports date selection (today, tomorrow, or YYYY-MM-DD).",
     inputSchema: {
       type: "object",
       properties: {
-        date: { type: "string", description: "Optional: 'today', 'tomorrow', or 'YYYY-MM-DD'. Defaults to today." },
+        date: { type: "string", description: "Target date: 'today', 'tomorrow', or 'YYYY-MM-DD'. Defaults to 'today'." },
       },
       required: [],
     },
   },
   {
     name: "add_routine",
-    description: "Add a new routine item to the Routine Tracker. Automatically syncs with the web app calendar.",
+    description: "Add a new routine item to Routine Tracker. You CAN choose tomorrow or any future date by setting the date parameter.",
     inputSchema: {
       type: "object",
       properties: {
-        time: { type: "string", description: "Time string, e.g. '06:00 AM' or '07:00 AM - 08:30 AM'" },
-        title: { type: "string", description: "What to do, e.g. 'Study SQL Window Functions'" },
-        category: { type: "string", description: "Optional category tag, e.g. 'SQL', 'ML', 'GenAI', 'Health'" },
-        date: { type: "string", description: "Optional: 'today', 'tomorrow', or 'YYYY-MM-DD'. Defaults to today." },
+        time: { type: "string", description: "Time string or slot, e.g. '06:00 AM' or '07:00 AM - 08:30 AM'" },
+        title: { type: "string", description: "Routine title or task description, e.g. 'Study SQL Window Functions'" },
+        category: { type: "string", description: "Optional category tag, e.g. 'SQL', 'ML', 'Python', 'GenAI', 'Health'" },
+        date: { type: "string", description: "Date for routine: 'today', 'tomorrow', or 'YYYY-MM-DD'. Pass 'tomorrow' to schedule for tomorrow." },
       },
       required: ["time", "title"],
     },
   },
   {
     name: "set_full_routine",
-    description: "Set or replace the entire routine for a date with a curated list of items (e.g. daily AI/ML schedule).",
+    description: "Set or replace the entire routine for today, tomorrow, or a specific date.",
     inputSchema: {
       type: "object",
       properties: {
-        date: { type: "string", description: "Optional: 'today', 'tomorrow', or 'YYYY-MM-DD'. Defaults to today." },
+        date: { type: "string", description: "Target date: 'today', 'tomorrow', or 'YYYY-MM-DD'. Defaults to today." },
         routines: {
           type: "array",
           items: {
@@ -100,11 +121,11 @@ const TOOLS = [
   },
   {
     name: "toggle_routine",
-    description: "Mark a routine item as done or undone.",
+    description: "Mark a routine item as done or undone. Note: Routine tick mark is only permitted when task time has ended.",
     inputSchema: {
       type: "object",
       properties: {
-        title_or_id: { type: "string", description: "ID or partial name of the routine" },
+        title_or_id: { type: "string", description: "ID or partial title of the routine to toggle" },
         done: { type: "boolean", description: "True for completed, false for uncompleted" },
         date: { type: "string", description: "Optional date to look in: 'today', 'tomorrow', or 'YYYY-MM-DD'." },
       },
@@ -117,7 +138,7 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        date: { type: "string", description: "Optional: 'today', 'tomorrow', 'YYYY-MM-DD', or 'all'. Defaults to 'today'." },
+        date: { type: "string", description: "Target date: 'today', 'tomorrow', 'YYYY-MM-DD', or 'all'. Defaults to 'today'." },
       },
       required: [],
     },
@@ -173,6 +194,12 @@ async function addRoutine(time: string, title: string, category: string = "", da
   }
 
   const targetDate = resolveTargetDate(dateInput, state.date);
+
+  // RESTRICT PAST DATES:
+  if (targetDate < today) {
+    return `⚠️ Restricted: Cannot schedule routines in the past (${targetDate}). Routines can only be scheduled for today (${today}) or future dates.`;
+  }
+
   if (!state.routinesByDate[targetDate] || !Array.isArray(state.routinesByDate[targetDate])) {
     state.routinesByDate[targetDate] = [];
   }
@@ -187,7 +214,6 @@ async function addRoutine(time: string, title: string, category: string = "", da
 
   state.routinesByDate[targetDate].push(newItem);
 
-  // Keep state.routines in sync with today's routine list
   const currentToday = state.date || today;
   if (targetDate === currentToday) {
     state.routines = state.routinesByDate[targetDate];
@@ -216,6 +242,11 @@ async function setFullRoutine(newItems: any[], dateInput?: string) {
   }
 
   const targetDate = resolveTargetDate(dateInput, state.date);
+
+  if (targetDate < today) {
+    return `⚠️ Restricted: Cannot set routines for past dates (${targetDate}).`;
+  }
+
   const now = Date.now();
   const routines = newItems.map((item, idx) => ({
     id: `rt-${now}-${idx}`,
@@ -248,14 +279,16 @@ async function toggleRoutine(titleOrId: string, done: boolean = true, dateInput?
 
   if (!data?.state) return "No routines found.";
   const state = data.state;
-  let found = false;
+  const today = getTodayDate();
+  let foundRoutine: any = null;
+  let routineDate: string = "";
 
-  const checkList = (list: any[]) => {
+  const checkList = (list: any[], d: string) => {
     if (!Array.isArray(list)) return false;
     for (const r of list) {
       if (r.id === titleOrId || (r.title && r.title.toLowerCase().includes(titleOrId.toLowerCase()))) {
-        r.done = done;
-        found = true;
+        foundRoutine = r;
+        routineDate = d;
         return true;
       }
     }
@@ -265,32 +298,57 @@ async function toggleRoutine(titleOrId: string, done: boolean = true, dateInput?
   if (dateInput) {
     const targetDate = resolveTargetDate(dateInput, state.date);
     if (state.routinesByDate && state.routinesByDate[targetDate]) {
-      checkList(state.routinesByDate[targetDate]);
+      checkList(state.routinesByDate[targetDate], targetDate);
     }
   } else {
     if (state.routinesByDate) {
       for (const d of Object.keys(state.routinesByDate)) {
-        if (checkList(state.routinesByDate[d])) break;
+        if (checkList(state.routinesByDate[d], d)) break;
       }
     }
-    if (!found && state.routines) {
-      checkList(state.routines);
+    if (!foundRoutine && state.routines) {
+      checkList(state.routines, state.date || today);
     }
   }
 
-  const today = getTodayDate();
+  if (!foundRoutine) {
+    return `Could not find a routine matching '${titleOrId}'.`;
+  }
+
+  // RESTRICTION CHECK WHEN MARKING AS DONE:
+  if (done) {
+    if (routineDate > today) {
+      return `🔒 Restricted: Routines scheduled for future dates (${routineDate}) cannot be completed in advance!`;
+    }
+    if (routineDate === today && foundRoutine.time) {
+      let timeStr = foundRoutine.time.trim().replace(/\s*\([^)]*\)/g, "").trim();
+      let endTimeStr = timeStr;
+      if (timeStr.includes("-")) {
+        const segs = timeStr.split("-");
+        endTimeStr = segs[segs.length - 1].trim();
+      }
+      const endMin = parseTimeToMinutes(endTimeStr);
+      if (endMin !== null) {
+        const curMin = getISTMinutes();
+        if (curMin < endMin) {
+          return `⏳ Restricted: Task time has not ended yet! Current time has not reached ${endTimeStr}. You can only tick routines after their time ends.`;
+        }
+      }
+    }
+  }
+
+  foundRoutine.done = done;
+
   const currentToday = state.date || today;
   if (state.routinesByDate && state.routinesByDate[currentToday]) {
     state.routines = state.routinesByDate[currentToday];
   }
 
-  if (!found) return `Could not find a routine matching '${titleOrId}'.`;
-
   await supabase
     .from("user_discipline_state")
     .upsert({ user_id: USER_ID, state, updated_at: new Date().toISOString() });
 
-  return `Routine '${titleOrId}' marked as ${done ? "completed" : "uncompleted"}.`;
+  return `Routine '${foundRoutine.title}' marked as ${done ? "completed" : "uncompleted"}.`;
 }
 
 async function clearAll(dateInput?: string) {
@@ -333,7 +391,6 @@ serve(async (req) => {
     return new Response("ok", { headers: CORS_HEADERS });
   }
 
-  // Handle MCP Protocol (JSON-RPC 2.0)
   if (req.method === "POST") {
     try {
       const body = await req.json();
@@ -413,7 +470,6 @@ serve(async (req) => {
     }
   }
 
-  // GET / Info Endpoint
   return new Response(
     JSON.stringify({
       status: "online",

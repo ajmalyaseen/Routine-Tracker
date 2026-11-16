@@ -265,7 +265,7 @@
           <div class="grid grid-cols-2 gap-2 sm:gap-3">
             <div>
               <span class="text-[10px] text-zinc-500 mb-1 block font-mono">START TIME</span>
-              <input type="time" id="inputStartTime" value="08:00" onchange="updateTimePreview()" required class="w-full px-3.5 py-2 rounded-xl bg-zinc-950 border border-zinc-800 text-xs text-white focus:outline-none focus:border-brand-500 font-mono">
+              <input type="time" id="inputStartTime" value="08:00" onchange="handleStartTimeChange()" required class="w-full px-3.5 py-2 rounded-xl bg-zinc-950 border border-zinc-800 text-xs text-white focus:outline-none focus:border-brand-500 font-mono">
             </div>
             <div>
               <span class="text-[10px] text-zinc-500 mb-1 block font-mono">END TIME</span>
@@ -1006,6 +1006,52 @@
       }
     }
 
+    // TASK TIME & COMPLETION RESTRICTION ENGINE
+    function getTaskTimeStatus(item, dateKey) {
+      if (!dateKey) dateKey = selectedDate;
+      // 1. Future dates: completely restricted
+      if (dateKey > todayDate) {
+        return { canTick: false, isFuture: true, isOngoingOrUpcoming: false, reason: 'Future Date' };
+      }
+      // 2. Past dates: time already ended
+      if (dateKey < todayDate) {
+        return { canTick: true, isFuture: false, isOngoingOrUpcoming: false, reason: 'Past Date' };
+      }
+      // 3. Today: Tick mark only allowed when task time has ended
+      if (!item || !item.time) {
+        return { canTick: true, isFuture: false, isOngoingOrUpcoming: false };
+      }
+
+      let timeStr = item.time.trim().replace(/\s*\([^)]*\)/g, '').trim();
+      let endTimeStr = timeStr;
+      if (timeStr.includes('-')) {
+        const segments = timeStr.split('-');
+        endTimeStr = segments[segments.length - 1].trim();
+      }
+
+      const endMinutes = parseTimeToMinutes(endTimeStr);
+      if (endMinutes === null) {
+        return { canTick: true, isFuture: false, isOngoingOrUpcoming: false };
+      }
+
+      const now = new Date();
+      const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+      // If current time is strictly before the task's end time, ticking is locked!
+      if (currentMinutes < endMinutes) {
+        return {
+          canTick: false,
+          isFuture: false,
+          isOngoingOrUpcoming: true,
+          endTimeStr: endTimeStr,
+          minutesLeft: endMinutes - currentMinutes,
+          reason: `Task in progress / upcoming. Ends at ${endTimeStr}`
+        };
+      }
+
+      return { canTick: true, isFuture: false, isOngoingOrUpcoming: false, reason: 'Task time ended' };
+    }
+
     // RENDER ROUTINES
     function render() {
       const currentList = getRoutinesForDate(selectedDate);
@@ -1019,44 +1065,75 @@
         return;
       }
 
-      const isFutureDate = (selectedDate > todayDate);
-
       empty.classList.add('hidden');
-      list.innerHTML = currentList.map((item, index) => `
-        <div onclick="openDetailModal(${index})" class="group flex items-center justify-between p-4 rounded-2xl bg-zinc-900/80 hover:bg-zinc-900 border ${item.done ? 'border-zinc-800/50 bg-zinc-950/40' : 'border-zinc-800'} transition duration-150 cursor-pointer active:scale-[0.99]">
-          
-          <div class="flex items-center gap-3.5 flex-1 min-w-0 pr-3">
-            <!-- Custom Checkbox (Restricted if future date) -->
-            <button onclick="event.stopPropagation(); toggleRoutine(${index})" 
-                    class="w-6 h-6 rounded-lg border flex items-center justify-center shrink-0 transition ${isFutureDate ? 'border-zinc-800/90 bg-zinc-950/60 text-zinc-500 cursor-not-allowed opacity-60' : 'cursor-pointer active:scale-90 ' + (item.done ? 'bg-brand-500 border-brand-500 text-white' : 'border-zinc-700 hover:border-zinc-500 bg-zinc-950')}"
-                    title="${isFutureDate ? 'Future task — cannot be completed in advance' : (item.done ? 'Mark incomplete' : 'Mark completed')}">
-              ${isFutureDate ? '<i data-lucide="lock" class="w-3 h-3 text-zinc-500"></i>' : (item.done ? '<i data-lucide="check" class="w-4 h-4 stroke-[3]"></i>' : '')}
-            </button>
+      list.innerHTML = currentList.map((item, index) => {
+        const timeStatus = getTaskTimeStatus(item, selectedDate);
 
-            <!-- Time Pill -->
-            <span class="text-xs font-mono font-medium px-2.5 py-1 rounded-md bg-zinc-950 border border-zinc-800/80 text-zinc-400 shrink-0">
-              ${item.time}
-            </span>
+        let iconMarkup = '';
+        let buttonTitle = '';
+        let buttonClass = '';
 
-            <!-- Title -->
-            <span class="text-xs sm:text-sm font-medium truncate select-none ${item.done ? 'text-zinc-500 line-through' : 'text-zinc-100'}">
-              ${item.title}
-            </span>
+        if (item.done) {
+          iconMarkup = '<i data-lucide="check" class="w-4 h-4 stroke-[3]"></i>';
+          buttonTitle = 'Completed ✓ (Click to uncheck)';
+          buttonClass = 'bg-brand-500 border-brand-500 text-white cursor-pointer active:scale-90';
+        } else if (!timeStatus.canTick) {
+          if (timeStatus.isFuture) {
+            iconMarkup = '<i data-lucide="lock" class="w-3 h-3 text-zinc-500"></i>';
+            buttonTitle = 'Future task — cannot be completed in advance';
+            buttonClass = 'border-zinc-800 bg-zinc-950/80 text-zinc-500 cursor-not-allowed opacity-60';
+          } else {
+            // Task time has not ended yet today
+            iconMarkup = '<i data-lucide="clock" class="w-3 h-3 text-amber-400 animate-pulse"></i>';
+            buttonTitle = `Task in progress / upcoming — can only tick after ${timeStatus.endTimeStr}`;
+            buttonClass = 'border-amber-500/40 bg-amber-500/10 text-amber-400 cursor-not-allowed hover:bg-amber-500/20';
+          }
+        } else {
+          // Task time has ended, ready to tick!
+          iconMarkup = '';
+          buttonTitle = 'Mark completed (Task time ended)';
+          buttonClass = 'border-zinc-700 hover:border-brand-500 bg-zinc-950 cursor-pointer active:scale-90';
+        }
 
-            <!-- Optional Tag -->
-            ${item.category ? `<span class="hidden sm:inline-block text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-400 shrink-0">${item.category}</span>` : ''}
+        return `
+          <div onclick="openDetailModal(${index})" class="group flex items-center justify-between p-4 rounded-2xl bg-zinc-900/80 hover:bg-zinc-900 border ${item.done ? 'border-zinc-800/50 bg-zinc-950/40' : (!timeStatus.canTick && !timeStatus.isFuture ? 'border-amber-500/20' : 'border-zinc-800')} transition duration-150 cursor-pointer active:scale-[0.99]">
+            
+            <div class="flex items-center gap-3.5 flex-1 min-w-0 pr-3">
+              <!-- Custom Checkbox (Restricted if future date OR task time has not ended) -->
+              <button onclick="event.stopPropagation(); toggleRoutine(${index})" 
+                      class="w-6 h-6 rounded-lg border flex items-center justify-center shrink-0 transition ${buttonClass}"
+                      title="${buttonTitle}">
+                ${iconMarkup}
+              </button>
+
+              <!-- Time Pill -->
+              <span class="text-xs font-mono font-medium px-2.5 py-1 rounded-md bg-zinc-950 border ${!item.done && !timeStatus.canTick && !timeStatus.isFuture ? 'border-amber-500/30 text-amber-300' : 'border-zinc-800/80 text-zinc-400'} shrink-0">
+                ${item.time}
+              </span>
+
+              <!-- Title -->
+              <span class="text-xs sm:text-sm font-medium truncate select-none ${item.done ? 'text-zinc-500 line-through' : 'text-zinc-100'}">
+                ${item.title}
+              </span>
+
+              <!-- Optional Tag -->
+              ${item.category ? `<span class="hidden sm:inline-block text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-400 shrink-0">${item.category}</span>` : ''}
+              
+              <!-- In-progress badge if time not ended yet -->
+              ${!item.done && !timeStatus.canTick && !timeStatus.isFuture ? `<span class="hidden md:inline-flex items-center gap-1 text-[9px] font-mono px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400/90 border border-amber-500/20">⏳ Active (Ends ${timeStatus.endTimeStr})</span>` : ''}
+            </div>
+
+            <!-- Actions & Right Chevron for Mobile -->
+            <div class="flex items-center gap-1">
+              <span class="text-zinc-600 sm:hidden text-sm pr-1 font-bold">&rsaquo;</span>
+              <button onclick="event.stopPropagation(); deleteRoutine(${index})" class="p-1.5 text-zinc-500 hover:text-rose-400 rounded-lg hover:bg-zinc-800 transition opacity-80 sm:opacity-0 sm:group-hover:opacity-100" title="Delete">
+                <i data-lucide="trash-2" class="w-4 h-4"></i>
+              </button>
+            </div>
+
           </div>
-
-          <!-- Actions & Right Chevron for Mobile -->
-          <div class="flex items-center gap-1">
-            <span class="text-zinc-600 sm:hidden text-sm pr-1 font-bold">&rsaquo;</span>
-            <button onclick="event.stopPropagation(); deleteRoutine(${index})" class="p-1.5 text-zinc-500 hover:text-rose-400 rounded-lg hover:bg-zinc-800 transition opacity-80 sm:opacity-0 sm:group-hover:opacity-100" title="Delete">
-              <i data-lucide="trash-2" class="w-4 h-4"></i>
-            </button>
-          </div>
-
-        </div>
-      `).join('');
+        `;
+      }).join('');
 
       lucide.createIcons();
       updateProgress();
@@ -1070,7 +1147,7 @@
       if (typeof currentList[index] === 'undefined') return;
       currentDetailIndex = index;
       const item = currentList[index];
-      const isFutureDate = (selectedDate > todayDate);
+      const timeStatus = getTaskTimeStatus(item, selectedDate);
 
       document.getElementById('detailTime').innerText = item.time;
       document.getElementById('detailTitle').innerText = item.title;
@@ -1080,7 +1157,7 @@
       const toggleBtn = document.getElementById('detailToggleBtn');
       const toggleText = document.getElementById('detailToggleText');
 
-      if (isFutureDate) {
+      if (timeStatus.isFuture) {
         statusPill.innerText = "Scheduled for Future";
         statusPill.className = "text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700/60";
         toggleBtn.className = "w-full py-3 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 transition bg-zinc-900 text-zinc-500 border border-zinc-800 cursor-not-allowed opacity-75";
@@ -1090,9 +1167,14 @@
         statusPill.className = "text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-brand-500/20 text-brand-400 border border-brand-500/30";
         toggleBtn.className = "w-full py-3 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 transition bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700";
         toggleText.innerText = "Mark as Incomplete";
+      } else if (!timeStatus.canTick) {
+        statusPill.innerText = `In Progress (Ends ${timeStatus.endTimeStr})`;
+        statusPill.className = "text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30";
+        toggleBtn.className = "w-full py-3 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 transition bg-zinc-900 text-amber-400 border border-amber-500/30 cursor-not-allowed opacity-90";
+        toggleText.innerText = `⏳ Locked until ${timeStatus.endTimeStr} (Task Time Not Ended)`;
       } else {
-        statusPill.innerText = "Pending";
-        statusPill.className = "text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700/60";
+        statusPill.innerText = "Ready to Complete (Time Ended)";
+        statusPill.className = "text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30";
         toggleBtn.className = "w-full py-3 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 transition bg-brand-500 hover:bg-brand-600 text-white shadow-lg shadow-brand-500/20";
         toggleText.innerText = "Mark as Completed";
       }
@@ -1108,11 +1190,23 @@
 
     function toggleDetailDone() {
       if (currentDetailIndex !== null) {
-        if (selectedDate > todayDate) {
-          const d = parseLocalDate(selectedDate);
-          const formatted = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-          alert(`🔒 Future Task Restricted: You cannot complete routines scheduled for ${formatted} in advance. Stay disciplined and tick it on that day!`);
-          return;
+        const currentList = getRoutinesForDate(selectedDate);
+        const item = currentList[currentDetailIndex];
+        if (!item) return;
+
+        // If not done, verify restriction
+        if (!item.done) {
+          const timeStatus = getTaskTimeStatus(item, selectedDate);
+          if (!timeStatus.canTick) {
+            if (timeStatus.isFuture) {
+              const d = parseLocalDate(selectedDate);
+              const formatted = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+              alert(`🔒 Future Task Restricted: You cannot complete routines scheduled for ${formatted} in advance. Stay disciplined and tick it on that day!`);
+            } else {
+              alert(`⏳ Task Time Not Ended: You can only tick this routine complete AFTER its scheduled time has ended (${timeStatus.endTimeStr || 'end time'}). Stay focused and finish your session!`);
+            }
+            return;
+          }
         }
         toggleRoutine(currentDetailIndex);
         openDetailModal(currentDetailIndex);
@@ -1127,18 +1221,36 @@
       }
     }
 
-    // TOGGLE DONE (RESTRICTED FOR FUTURE DATES)
+    // TOGGLE DONE (RESTRICTED FOR FUTURE DATES & UNTIL TASK TIME HAS ENDED)
     function toggleRoutine(index) {
-      if (selectedDate > todayDate) {
-        const d = parseLocalDate(selectedDate);
-        const formatted = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-        alert(`🔒 Future Task Restricted: You cannot complete routines scheduled for ${formatted} in advance. Stay disciplined and tick it on that day!`);
-        return;
-      }
       const currentList = getRoutinesForDate(selectedDate);
       if (!currentList[index]) return;
-      currentList[index].done = !currentList[index].done;
-      if (currentList[index].done) playClickSound();
+      const item = currentList[index];
+
+      // If already done, user can uncheck it
+      if (item.done) {
+        item.done = false;
+        saveLocal();
+        render();
+        pushToSupabase();
+        return;
+      }
+
+      // Check time status: must be ended
+      const timeStatus = getTaskTimeStatus(item, selectedDate);
+      if (!timeStatus.canTick) {
+        if (timeStatus.isFuture) {
+          const d = parseLocalDate(selectedDate);
+          const formatted = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+          alert(`🔒 Future Task Restricted: You cannot complete routines scheduled for ${formatted} in advance. Stay disciplined and tick it on that day!`);
+        } else {
+          alert(`⏳ Task Time Not Ended: You can only tick this routine complete AFTER its scheduled time has ended (${timeStatus.endTimeStr || 'end time'}). Stay focused and finish your session!`);
+        }
+        return;
+      }
+
+      item.done = true;
+      playClickSound();
       saveLocal();
       render();
       pushToSupabase();
@@ -1181,6 +1293,31 @@
       if (preview) {
         preview.innerText = `${start12} - ${end12}${durText}`;
       }
+    }
+
+    function handleStartTimeChange() {
+      const dateInput = document.getElementById('inputDate');
+      const startEl = document.getElementById('inputStartTime');
+      if (!dateInput || !startEl) return;
+      const dateVal = dateInput.value || selectedDate;
+      if (dateVal === todayDate && startEl.value) {
+        const [sH, sM] = startEl.value.split(':').map(Number);
+        const slotStart = sH * 60 + sM;
+        const now = new Date();
+        const currentMin = now.getHours() * 60 + now.getMinutes();
+        if (slotStart < currentMin) {
+          const currentFormatted = formatTime12h(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
+          alert(`⚠️ Past time restricted! Current time is ${currentFormatted}. Please select an upcoming start time.`);
+          let nextH = now.getHours();
+          let nextM = now.getMinutes() >= 30 ? 60 : 30;
+          if (nextM === 60) {
+            nextH = (nextH + 1) % 24;
+            nextM = 0;
+          }
+          startEl.value = `${String(nextH).padStart(2, '0')}:${String(nextM).padStart(2, '0')}`;
+        }
+      }
+      updateTimePreview();
     }
 
     function setAddFormDate(type) {
@@ -1686,8 +1823,10 @@
     }
 
     function parseTimeToMinutes(timeStr) {
+      if (!timeStr) return null;
       try {
-        const parts = timeStr.trim().split(' ');
+        const clean = timeStr.trim().replace(/\s*\([^)]*\)/g, '').trim();
+        const parts = clean.split(' ');
         const [h, m] = parts[0].split(':').map(Number);
         const ampm = (parts[1] || '').toUpperCase();
         let hours = h;
