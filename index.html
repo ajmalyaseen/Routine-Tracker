@@ -1006,14 +1006,18 @@
         return;
       }
 
+      const isFutureDate = (selectedDate > todayDate);
+
       empty.classList.add('hidden');
       list.innerHTML = currentList.map((item, index) => `
         <div onclick="openDetailModal(${index})" class="group flex items-center justify-between p-4 rounded-2xl bg-zinc-900/80 hover:bg-zinc-900 border ${item.done ? 'border-zinc-800/50 bg-zinc-950/40' : 'border-zinc-800'} transition duration-150 cursor-pointer active:scale-[0.99]">
           
           <div class="flex items-center gap-3.5 flex-1 min-w-0 pr-3">
-            <!-- Custom Checkbox -->
-            <button onclick="event.stopPropagation(); toggleRoutine(${index})" class="w-6 h-6 rounded-lg border flex items-center justify-center shrink-0 transition active:scale-90 ${item.done ? 'bg-brand-500 border-brand-500 text-white' : 'border-zinc-700 hover:border-zinc-500 bg-zinc-950'}">
-              ${item.done ? '<i data-lucide="check" class="w-4 h-4 stroke-[3]"></i>' : ''}
+            <!-- Custom Checkbox (Restricted if future date) -->
+            <button onclick="event.stopPropagation(); toggleRoutine(${index})" 
+                    class="w-6 h-6 rounded-lg border flex items-center justify-center shrink-0 transition ${isFutureDate ? 'border-zinc-800/90 bg-zinc-950/60 text-zinc-500 cursor-not-allowed opacity-60' : 'cursor-pointer active:scale-90 ' + (item.done ? 'bg-brand-500 border-brand-500 text-white' : 'border-zinc-700 hover:border-zinc-500 bg-zinc-950')}"
+                    title="${isFutureDate ? 'Future task — cannot be completed in advance' : (item.done ? 'Mark incomplete' : 'Mark completed')}">
+              ${isFutureDate ? '<i data-lucide="lock" class="w-3 h-3 text-zinc-500"></i>' : (item.done ? '<i data-lucide="check" class="w-4 h-4 stroke-[3]"></i>' : '')}
             </button>
 
             <!-- Time Pill -->
@@ -1053,6 +1057,7 @@
       if (typeof currentList[index] === 'undefined') return;
       currentDetailIndex = index;
       const item = currentList[index];
+      const isFutureDate = (selectedDate > todayDate);
 
       document.getElementById('detailTime').innerText = item.time;
       document.getElementById('detailTitle').innerText = item.title;
@@ -1062,7 +1067,12 @@
       const toggleBtn = document.getElementById('detailToggleBtn');
       const toggleText = document.getElementById('detailToggleText');
 
-      if (item.done) {
+      if (isFutureDate) {
+        statusPill.innerText = "Scheduled for Future";
+        statusPill.className = "text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700/60";
+        toggleBtn.className = "w-full py-3 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 transition bg-zinc-900 text-zinc-500 border border-zinc-800 cursor-not-allowed opacity-75";
+        toggleText.innerText = "Locked (Scheduled for Future)";
+      } else if (item.done) {
         statusPill.innerText = "Completed ✓";
         statusPill.className = "text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-brand-500/20 text-brand-400 border border-brand-500/30";
         toggleBtn.className = "w-full py-3 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 transition bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700";
@@ -1085,6 +1095,12 @@
 
     function toggleDetailDone() {
       if (currentDetailIndex !== null) {
+        if (selectedDate > todayDate) {
+          const d = parseLocalDate(selectedDate);
+          const formatted = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+          alert(`🔒 Future Task Restricted: You cannot complete routines scheduled for ${formatted} in advance. Stay disciplined and tick it on that day!`);
+          return;
+        }
         toggleRoutine(currentDetailIndex);
         openDetailModal(currentDetailIndex);
       }
@@ -1098,8 +1114,14 @@
       }
     }
 
-    // TOGGLE DONE
+    // TOGGLE DONE (RESTRICTED FOR FUTURE DATES)
     function toggleRoutine(index) {
+      if (selectedDate > todayDate) {
+        const d = parseLocalDate(selectedDate);
+        const formatted = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+        alert(`🔒 Future Task Restricted: You cannot complete routines scheduled for ${formatted} in advance. Stay disciplined and tick it on that day!`);
+        return;
+      }
       const currentList = getRoutinesForDate(selectedDate);
       if (!currentList[index]) return;
       currentList[index].done = !currentList[index].done;
