@@ -210,9 +210,13 @@
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd3cnJsaXBjamhocndqamprdWJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ4MTQ0OTYsImV4cCI6MjExMDM5MDQ5Nn0.B0-Eg4YOMyRe7rQNdOl_-xYtw6G6S9TKdX45KNvngHQ';
     const USER_ID = 'routine-master-user';
 
-    let supabase = null;
-    if (window.supabase) {
-      supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    let sbClient = null;
+    try {
+      if (window.supabase && typeof window.supabase.createClient === 'function') {
+        sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      }
+    } catch (e) {
+      console.warn("Supabase initialization error:", e);
     }
 
     // DEFAULT SCHEDULE FALLBACK
@@ -280,9 +284,9 @@
 
     // SUPABASE PUSH
     async function pushToSupabase() {
-      if (!supabase) return;
+      if (!sbClient) return;
       try {
-        const { error } = await supabase
+        const { error } = await sbClient
           .from('user_discipline_state')
           .upsert({
             user_id: USER_ID,
@@ -297,15 +301,15 @@
 
     // SUPABASE PULL
     async function pullFromSupabase() {
-      if (!supabase) return;
+      if (!sbClient) return;
       try {
-        const { data, error } = await supabase
+        const { data, error } = await sbClient
           .from('user_discipline_state')
           .select('state')
           .eq('user_id', USER_ID)
           .single();
 
-        if (data && data.state && Array.isArray(data.state.routines)) {
+        if (data && data.state && Array.isArray(data.state.routines) && data.state.routines.length > 0) {
           routines = data.state.routines;
           saveLocal();
           render();
@@ -318,9 +322,9 @@
 
     // LISTEN FOR REALTIME CHANGES (e.g. Claude MCP inserts a routine)
     function subscribeToRealtime() {
-      if (!supabase) return;
+      if (!sbClient) return;
       try {
-        supabase
+        sbClient
           .channel('public:user_discipline_state')
           .on('postgres_changes', { event: '*', schema: 'public', table: 'user_discipline_state' }, payload => {
             if (payload.new && payload.new.user_id === USER_ID && payload.new.state && payload.new.state.routines) {
