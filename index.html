@@ -647,17 +647,21 @@
       }
 
       // 2. CRITICAL MERGE: If incomingState.routines has items (e.g. added by ChatGPT or MCP flatly),
-      // merge them into routinesByDate[todayDate] so no AI-added routine is ever lost!
+      // merge them into routinesByDate[incomingState.date || todayDate] so no AI-added routine is ever lost!
       if (Array.isArray(incomingState.routines) && incomingState.routines.length > 0) {
-        const todayList = routinesByDate[todayDate];
+        const targetDay = incomingState.date || todayDate;
+        if (!routinesByDate[targetDay] || !Array.isArray(routinesByDate[targetDay])) {
+          routinesByDate[targetDay] = [];
+        }
+        const dayList = routinesByDate[targetDay];
         incomingState.routines.forEach(item => {
           if (!item || !item.title) return;
-          const exists = todayList.some(r => 
+          const exists = dayList.some(r => 
             (item.id && r.id === item.id) || 
             (r.time === item.time && r.title.toLowerCase().trim() === item.title.toLowerCase().trim())
           );
           if (!exists) {
-            todayList.push({
+            dayList.push({
               id: item.id || `rt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
               time: item.time || '',
               title: item.title || '',
@@ -1874,7 +1878,7 @@
     }
 
     // INIT
-    function initApp() {
+    async function initApp() {
       try {
         const options = { weekday: 'long', month: 'short', day: 'numeric' };
         const label = document.getElementById('todayDateLabel');
@@ -1883,19 +1887,22 @@
         }
 
         loadLocal();
-        cleanAllStoredRoutines();
-        saveLocal();
         updateDateUI();
         updateNotifButtonUI();
         render();
         renderCalendarStrip();
         updateProgress();
-        pushToSupabase();
-        pullFromSupabase();
+
+        // 1. PULL fresh state from Supabase immediately on boot (never overwrite cloud on boot!)
+        await pullFromSupabase();
         subscribeToRealtime();
+
         setInterval(checkSlotReminders, 30000);
         setInterval(checkDayRollover, 60000);
-        window.addEventListener('focus', checkDayRollover);
+        window.addEventListener('focus', () => {
+          checkDayRollover();
+          pullFromSupabase();
+        });
 
         if (window.lucide) {
           lucide.createIcons();
