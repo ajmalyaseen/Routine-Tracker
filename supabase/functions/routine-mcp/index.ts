@@ -176,46 +176,55 @@ async function hasRoutinesTable(): Promise<boolean> {
 }
 
 async function fetchRoutinesForDate(targetDate: string): Promise<RoutineRecord[]> {
-  const useTable = await hasRoutinesTable();
+  const { data: stateData } = await supabase
+    .from("user_discipline_state")
+    .select("state")
+    .eq("user_id", USER_ID)
+    .single();
 
+  const state = stateData?.state;
+  const stateList = state?.routinesByDate?.[targetDate] ?? (targetDate === state?.date ? state?.routines : null);
+
+  const useTable = await hasRoutinesTable();
   if (useTable) {
-    const { data, error } = await supabase
+    const { data: tableRows, error } = await supabase
       .from("routines")
       .select("*")
       .eq("user_id", USER_ID)
       .eq("scheduled_date", targetDate)
       .order("start_time", { ascending: true });
 
-    if (!error && Array.isArray(data)) {
-      return data.map((r: any) => ({
-        id: r.id,
-        user_id: r.user_id,
-        title: r.title,
-        description: r.description || "",
-        category: r.category || "General",
-        scheduled_date: r.scheduled_date,
-        start_time: r.start_time ? r.start_time.substring(0, 5) : "08:00",
-        end_time: r.end_time ? r.end_time.substring(0, 5) : null,
-        time: r.end_time
-          ? `${to12HourDisplay(r.start_time.substring(0, 5))} - ${to12HourDisplay(r.end_time.substring(0, 5))}`
-          : to12HourDisplay(r.start_time.substring(0, 5)),
-        done: Boolean(r.done),
-        created_at: r.created_at,
-        updated_at: r.updated_at,
-      }));
+    if (!error && Array.isArray(tableRows)) {
+      // Self-healing: If user deleted all routines in web app (stateList is empty array)
+      // but table has stale zombie rows, purge the table for this date
+      if (Array.isArray(stateList) && stateList.length === 0 && tableRows.length > 0) {
+        await supabase.from("routines").delete().eq("user_id", USER_ID).eq("scheduled_date", targetDate);
+        return [];
+      }
+
+      if (tableRows.length > 0) {
+        return tableRows.map((r: any) => ({
+          id: r.id,
+          user_id: r.user_id,
+          title: r.title,
+          description: r.description || "",
+          category: r.category || "General",
+          scheduled_date: r.scheduled_date,
+          start_time: r.start_time ? r.start_time.substring(0, 5) : "08:00",
+          end_time: r.end_time ? r.end_time.substring(0, 5) : null,
+          time: r.end_time
+            ? `${to12HourDisplay(r.start_time.substring(0, 5))} - ${to12HourDisplay(r.end_time.substring(0, 5))}`
+            : to12HourDisplay(r.start_time.substring(0, 5)),
+          done: Boolean(r.done),
+          created_at: r.created_at,
+          updated_at: r.updated_at,
+        }));
+      }
     }
   }
 
-  const { data } = await supabase
-    .from("user_discipline_state")
-    .select("state")
-    .eq("user_id", USER_ID)
-    .single();
-
-  const state = data?.state;
   if (!state) return [];
-
-  const rawList = state.routinesByDate?.[targetDate] || (targetDate === state.date ? state.routines : []);
+  const rawList = stateList || [];
   if (!Array.isArray(rawList)) return [];
 
   const list: RoutineRecord[] = rawList.map((item: any) => {
@@ -485,6 +494,28 @@ const TOOLS = [
         date: {
           type: "string",
           description: "Optional date scope: 'today', 'tomorrow', or 'YYYY-MM-DD'.",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "delete_routine",
+    description: "Delete a specific routine by routine_id or title. Removes it from both the schedule and database.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        routine_id: {
+          type: "string",
+          description: "Stable ID of the routine to delete.",
+        },
+        title: {
+          type: "string",
+          description: "Title of the routine to delete if routine_id is unknown.",
+        },
+        date: {
+          type: "string",
+          description: "Optional calendar date scope: 'today', 'tomorrow', or 'YYYY-MM-DD'.",
         },
       },
       required: [],
@@ -872,6 +903,60 @@ async function handleToggleRoutine(args: any) {
   };
 }
 
+async function handleDeleteRoutine(args: any) {
+  const targetIdOrTitle = (args.routine_id || args.title || args.title_or_id || "").trim();
+  if (!targetIdOrTitle) {
+    throw new Error("routine_id or title is required to delete a routine.");
+  }
+
+  const targetDate = args.date ? resolveDate(args.date) : null;
+  let foundRoutine: RoutineRecord | null = null;
+  let foundDate: string | null = null;
+
+  const searchDate = async (d: string) => {
+    const list = await fetchRoutinesForDate(d);
+    let match = list.find((r) => r.id === targetIdOrTitle);
+    if (!match) {
+      match = list.find((r) => r.title.toLowerCase() === targetIdOrTitle.toLowerCase());
+    }
+    if (!match) {
+      match = list.find((r) => r.title.toLowerCase().includes(targetIdOrTitle.toLowerCase()));
+    }
+    if (match) {
+      foundRoutine = match;
+      foundDate = d;
+      return true;
+    }
+    return false;
+  };
+
+  if (targetDate) {
+    await searchDate(targetDate);
+  } else {
+    const today = getTodayKolkata();
+    const tmrw = resolveDate("tomorrow");
+    const yest = resolveDate("yesterday");
+    if (!(await searchDate(today))) {
+      if (!(await searchDate(tmrw))) {
+        await searchDate(yest);
+      }
+    }
+  }
+
+  if (!foundRoutine || !foundDate) {
+    throw new Error(`Could not find routine matching '${targetIdOrTitle}' to delete.`);
+  }
+
+  const list = await fetchRoutinesForDate(foundDate);
+  const remaining = list.filter((r) => r.id !== foundRoutine!.id);
+  await syncStateAndTable(foundDate, remaining);
+
+  return {
+    message: `Routine '${foundRoutine.title}' (ID: ${foundRoutine.id}, Date: ${foundDate}) deleted successfully.`,
+    deleted: foundRoutine,
+  };
+}
+
 async function handleClearAllRoutines(args: any) {
   if (args.confirm_all === true) {
     const useTable = await hasRoutinesTable();
@@ -954,6 +1039,8 @@ serve(async (req) => {
             resultData = await handleSetFullRoutine(args);
           } else if (name === "toggle_routine") {
             resultData = await handleToggleRoutine(args);
+          } else if (name === "delete_routine") {
+            resultData = await handleDeleteRoutine(args);
           } else if (name === "clear_all_routines") {
             resultData = await handleClearAllRoutines(args);
           } else {

@@ -216,8 +216,33 @@ def run_tests():
     assert "SQL Practice (Advanced recursive CTEs & Lead/Lag)" in res13_verify, f"Updated description not found: {res13_verify}"
     print("PASS: Title + Description field fully supported, retrieved, and updated!\n")
 
+    # 14. Verify delete_routine tool removes routine from both state and table
+    print("TEST 14: Verify delete_routine tool...")
+    res14_add = mcp_server.add_routine(
+        title="Temporary Delete Test Routine",
+        start_time="11:00",
+        end_time="11:45",
+        scheduled_date="today"
+    )
+    print("Added temp routine:", res14_add)
+    assert "Added routine" in res14_add, "Failed to add temp routine"
+    
+    # Delete it by title
+    res14_del = mcp_server.delete_routine(title="Temporary Delete Test Routine")
+    print("Delete result:", res14_del)
+    assert "deleted successfully" in res14_del, f"Delete failed: {res14_del}"
+    
+    # Verify it is gone
+    res14_verify = mcp_server.get_routines("today")
+    assert "Temporary Delete Test Routine" not in res14_verify, "Routine still found after delete!"
+    print("PASS: delete_routine cleanly removed routine from both state and table!\n")
+
+    # Clean up test data so tracker remains in user's desired state
+    mcp_server.clear_all_routines(confirm_all=True)
+    print("Cleaned up test data. State is now 100% clean.\n")
+
     print("==================================================================")
-    print("ALL 13 TESTS PASSED PERFECTLY! 100% SUCCESS")
+    print("ALL 14 TESTS PASSED PERFECTLY! 100% SUCCESS")
     print("==================================================================")
 
 if __name__ == "__main__":

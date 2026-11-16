@@ -142,7 +142,7 @@ def get_remote_state() -> dict:
     today = get_kolkata_now().strftime("%Y-%m-%d")
     return {"date": today, "routines": [], "routinesByDate": {}}
 
-def save_remote_state(state: dict) -> bool:
+def save_remote_state(state: dict, sync_date: str | None = None) -> bool:
     url = f"{SUPABASE_URL}/rest/v1/user_discipline_state"
     payload = {
         "user_id": USER_ID,
@@ -155,7 +155,51 @@ def save_remote_state(state: dict) -> bool:
             headers={**HEADERS, "Prefer": "resolution=merge-duplicates,return=representation"},
             json=payload
         )
-        return resp.status_code in (200, 201)
+        ok = resp.status_code in (200, 201)
+        
+        # Dual-sync to relational table public.routines
+        try:
+            dates = [sync_date] if sync_date else list(state.get("routinesByDate", {}).keys())
+            for d in dates:
+                if not d:
+                    continue
+                client.delete(
+                    f"{SUPABASE_URL}/rest/v1/routines?user_id=eq.{USER_ID}&scheduled_date=eq.{d}",
+                    headers=HEADERS
+                )
+                items = state.get("routinesByDate", {}).get(d, [])
+                if items:
+                    rows = []
+                    for r in items:
+                        rows.append({
+                            "id": r.get("id"),
+                            "user_id": USER_ID,
+                            "title": r.get("title", ""),
+                            "description": r.get("description", ""),
+                            "category": r.get("category", "General"),
+                            "scheduled_date": d,
+                            "start_time": r.get("start_time", "08:00"),
+                            "end_time": r.get("end_time"),
+                            "done": bool(r.get("done", False)),
+                            "updated_at": datetime.utcnow().isoformat()
+                        })
+                    post_res = client.post(
+                        f"{SUPABASE_URL}/rest/v1/routines",
+                        headers=HEADERS,
+                        json=rows
+                    )
+                    if post_res.status_code == 400 and "description" in post_res.text:
+                        for row in rows:
+                            row.pop("description", None)
+                        client.post(
+                            f"{SUPABASE_URL}/rest/v1/routines",
+                            headers=HEADERS,
+                            json=rows
+                        )
+        except Exception:
+            pass
+            
+        return ok
 
 @mcp.tool()
 def get_routines(date: str = "today") -> str:
@@ -463,6 +507,42 @@ def toggle_routine(routine_id: str, done: bool = True, date: str | None = None, 
     return f"Routine '{found_item.get('title')}' (ID: {found_item.get('id')}, Date: {found_date}) marked as {status_str}."
 
 @mcp.tool()
+def delete_routine(routine_id: str | None = None, title: str | None = None, date: str | None = None) -> str:
+    """
+    Delete a specific routine by routine_id or title. Removes it from both the schedule and database.
+    """
+    target = (routine_id or title or "").strip()
+    if not target:
+        return "Error: routine_id or title is required."
+        
+    state = get_remote_state()
+    routines_map = state.get("routinesByDate", {})
+    
+    found_item = None
+    found_date = None
+    
+    dates_to_search = [resolve_date(date)] if date else list(routines_map.keys())
+    for d in dates_to_search:
+        for r in routines_map.get(d, []):
+            if r.get("id") == target or target.lower() in r.get("title", "").lower():
+                found_item = r
+                found_date = d
+                break
+        if found_item:
+            break
+            
+    if not found_item:
+        return f"Error: Could not find routine matching '{target}' to delete."
+        
+    routines_map[found_date] = [r for r in routines_map[found_date] if r.get("id") != found_item.get("id")]
+    state["routinesByDate"] = routines_map
+    if found_date == state.get("date"):
+        state["routines"] = routines_map[found_date]
+        
+    save_remote_state(state, sync_date=found_date)
+    return f"Routine '{found_item.get('title')}' (ID: {found_item.get('id')}, Date: {found_date}) deleted successfully."
+
+@mcp.tool()
 def clear_all_routines(date: str = "today", confirm_all: bool = False) -> str:
     """
     Clear routines for a specific date (date-scoped). Only clears all dates if confirm_all is True.
@@ -472,6 +552,8 @@ def clear_all_routines(date: str = "today", confirm_all: bool = False) -> str:
         today = get_kolkata_now().strftime("%Y-%m-%d")
         state["routinesByDate"] = {}
         state["routines"] = []
+        with httpx.Client(timeout=10.0) as client:
+            client.delete(f"{SUPABASE_URL}/rest/v1/routines?user_id=eq.{USER_ID}", headers=HEADERS)
         save_remote_state(state)
         return "All routines across all dates have been permanently cleared."
         
@@ -484,7 +566,9 @@ def clear_all_routines(date: str = "today", confirm_all: bool = False) -> str:
     routines_map[target_date] = []
     if target_date == state.get("date"):
         state["routines"] = []
-    save_remote_state(state)
+    with httpx.Client(timeout=10.0) as client:
+        client.delete(f"{SUPABASE_URL}/rest/v1/routines?user_id=eq.{USER_ID}&scheduled_date=eq.{target_date}", headers=HEADERS)
+    save_remote_state(state, sync_date=target_date)
     return f"Routines for {target_date} cleared. Other dates safely preserved."
 
 if __name__ == "__main__":

@@ -958,6 +958,7 @@
     async function pushToSupabase() {
       if (!sbClient) return;
       try {
+        const nowIso = new Date().toISOString();
         const { error } = await sbClient
           .from('user_discipline_state')
           .upsert({
@@ -971,8 +972,65 @@
               streak: streakCount,
               bestStreak: bestStreakCount
             },
-            updated_at: new Date().toISOString()
+            updated_at: nowIso
           });
+
+        // Keep relational table 'routines' in exact 1:1 sync
+        try {
+          const dateToSync = selectedDate || todayDate;
+          const currentList = getRoutinesForDate(dateToSync);
+
+          await sbClient
+            .from('routines')
+            .delete()
+            .eq('user_id', USER_ID)
+            .eq('scheduled_date', dateToSync);
+
+          if (currentList && currentList.length > 0) {
+            const rows = currentList.map(r => ({
+              id: r.id,
+              user_id: USER_ID,
+              title: r.title,
+              description: r.description || '',
+              category: r.category || 'General',
+              scheduled_date: dateToSync,
+              start_time: r.start_time || '08:00',
+              end_time: r.end_time || null,
+              done: Boolean(r.done),
+              updated_at: nowIso
+            }));
+            await sbClient.from('routines').insert(rows);
+          }
+
+          // If viewing a future/past date, also ensure todayDate is synced
+          if (todayDate !== dateToSync) {
+            const todayList = getRoutinesForDate(todayDate);
+            await sbClient
+              .from('routines')
+              .delete()
+              .eq('user_id', USER_ID)
+              .eq('scheduled_date', todayDate);
+
+            if (todayList && todayList.length > 0) {
+              const todayRows = todayList.map(r => ({
+                id: r.id,
+                user_id: USER_ID,
+                title: r.title,
+                description: r.description || '',
+                category: r.category || 'General',
+                scheduled_date: todayDate,
+                start_time: r.start_time || '08:00',
+                end_time: r.end_time || null,
+                done: Boolean(r.done),
+                updated_at: nowIso
+              }));
+              await sbClient.from('routines').insert(todayRows);
+            }
+          }
+        } catch (tblErr) {
+          console.warn("Relational routines sync skipped:", tblErr);
+        }
+
         updateCloudStatus(!error);
       } catch (e) {
         updateCloudStatus(false);
