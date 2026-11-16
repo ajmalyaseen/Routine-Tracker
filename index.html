@@ -531,15 +531,34 @@
       { id: 'rt-12', time: '09:30 PM - 10:00 PM', title: 'Habit Audit & 8h Sleep', category: 'Routine', done: false }
     ];
 
+    // TIMEZONE-SAFE LOCAL DATE HELPERS
+    function formatLocalDate(d) {
+      if (!d) d = new Date();
+      if (typeof d === 'string') {
+        if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+        d = new Date(d);
+      }
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+
+    function parseLocalDate(dateStr) {
+      if (!dateStr) return new Date();
+      const [y, m, d] = dateStr.split('-').map(Number);
+      return new Date(y, m - 1, d, 12, 0, 0); // 12:00 noon avoids timezone boundary shifts
+    }
+
     // STATE
-    let todayDate = new Date().toISOString().split('T')[0];
+    let todayDate = formatLocalDate(new Date());
     let selectedDate = todayDate;
     let selectedDayOffset = 0; // 0 = Today, 1 = Tomorrow, 2 = Day After, -1 = Custom
     let routinesByDate = {};
     let streakCount = 1;
     let bestStreakCount = 1;
     let dailyHistory = {};
-    let dailyNotes = {}; // { "2026-11-16": "note text" }
+    let dailyNotes = {}; // { "YYYY-MM-DD": "note text" }
     let notificationsEnabled = localStorage.getItem('routine_notifs_enabled') === 'true';
     let lastNotifiedSlot = null;
 
@@ -657,9 +676,9 @@
 
     function getMonday(d) {
       const date = new Date(d);
+      date.setHours(12, 0, 0, 0); // 12:00 noon avoids midnight timezone boundary issues
       const day = (date.getDay() + 6) % 7; // Monday = 0, Sunday = 6
       date.setDate(date.getDate() - day);
-      date.setHours(0, 0, 0, 0);
       return date;
     }
 
@@ -689,7 +708,7 @@
       if (!dateStr) return;
       selectedDate = dateStr;
       
-      const targetDate = new Date(dateStr + 'T00:00:00');
+      const targetDate = parseLocalDate(dateStr);
       const actualMonday = getMonday(new Date());
       const targetMonday = getMonday(targetDate);
       const diffDays = Math.round((targetMonday - actualMonday) / (1000 * 60 * 60 * 24));
@@ -744,7 +763,7 @@
       for (let i = 0; i < 7; i++) {
         const dayDate = new Date(viewMonday);
         dayDate.setDate(viewMonday.getDate() + i);
-        const dateStr = dayDate.toISOString().split('T')[0];
+        const dateStr = formatLocalDate(dayDate);
         const isToday = (dateStr === todayDate);
         const isSelected = (dateStr === selectedDate);
         const dayNum = dayDate.getDate();
@@ -793,7 +812,7 @@
 
     // CHECK AUTOMATIC DAY ROLLOVER (Midnight transition)
     function checkDayRollover() {
-      const currentActualToday = new Date().toISOString().split('T')[0];
+      const currentActualToday = formatLocalDate(new Date());
       if (currentActualToday !== todayDate) {
         handleNewDayRollover(todayDate);
         todayDate = currentActualToday;
@@ -811,7 +830,7 @@
     }
 
     function updateDateUI() {
-      const d = new Date(selectedDate + 'T00:00:00');
+      const d = parseLocalDate(selectedDate);
       const formatted = d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
       
       const titleLabel = document.getElementById('selectedDayTitleLabel');
@@ -1125,7 +1144,7 @@
       } else if (type === 'tomorrow') {
         const d = new Date();
         d.setDate(d.getDate() + 1);
-        input.value = d.toISOString().split('T')[0];
+        input.value = formatLocalDate(d);
       }
     }
 
@@ -1242,7 +1261,7 @@
       for (let i = 1; i <= 365; i++) {
         const prev = new Date();
         prev.setDate(prev.getDate() - i);
-        const key = prev.toISOString().split('T')[0];
+        const key = formatLocalDate(prev);
         const rec = dailyHistory[key];
         if (rec && rec.percent >= 60) {
           current++;
@@ -1268,6 +1287,7 @@
       if (!strip) return;
 
       const now = new Date();
+      now.setHours(12, 0, 0, 0);
       const currentDayOfWeek = (now.getDay() + 6) % 7; // 0 = Mon, 6 = Sun
       const monday = new Date(now);
       monday.setDate(now.getDate() - currentDayOfWeek);
@@ -1278,7 +1298,7 @@
       for (let i = 0; i < 7; i++) {
         const dayDate = new Date(monday);
         dayDate.setDate(monday.getDate() + i);
-        const dateKey = dayDate.toISOString().split('T')[0];
+        const dateKey = formatLocalDate(dayDate);
         const isToday = (dateKey === todayDate);
         const isSelected = (dateKey === selectedDate);
         const record = dailyHistory[dateKey];
@@ -1390,7 +1410,7 @@
       list.innerHTML = dates.slice(0, 14).map(dateKey => {
         const item = dailyHistory[dateKey];
         const isToday = dateKey === todayDate;
-        const d = new Date(dateKey + 'T00:00:00');
+        const d = parseLocalDate(dateKey);
         const formatted = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 
         return `
