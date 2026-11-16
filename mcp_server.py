@@ -1,6 +1,6 @@
 """
 Routine Tracker - FastMCP Server for Claude Desktop & Antigravity
-Full Date Support (scheduled_date) + Start & End Times (HH:MM) in Asia/Kolkata timezone.
+Full Date Support (date & scheduled_date) + Start & End Times + Duration in Asia/Kolkata timezone.
 """
 
 import httpx
@@ -76,6 +76,36 @@ def normalize_time(time_str: str | None) -> str | None:
         
     return f"{h:02d}:{m:02d}"
 
+def parse_duration_to_minutes(dur_str: str | int | float | None) -> int | None:
+    if dur_str is None:
+        return None
+    if isinstance(dur_str, (int, float)):
+        return int(dur_str)
+    s = str(dur_str).strip().lower()
+    if not s:
+        return None
+    if s.isdigit():
+        return int(s)
+    
+    total = 0
+    matched = False
+    h_m = re.search(r"(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hour|hours)", s)
+    if h_m:
+        total += int(round(float(h_m.group(1)) * 60))
+        matched = True
+    m_m = re.search(r"(\d+)\s*(?:m|min|mins|minute|minutes)", s)
+    if m_m:
+        total += int(m_m.group(1))
+        matched = True
+        
+    return total if matched and total > 0 else None
+
+def calculate_end_time(start_24: str, dur_mins: int) -> str:
+    parts = start_24.split(":")
+    sm = int(parts[0]) * 60 + int(parts[1])
+    em = (sm + dur_mins) % 1440
+    return f"{em // 60:02d}:{em % 60:02d}"
+
 def validate_time_range(start_24: str, end_24: str | None = None):
     if not start_24:
         raise ValueError("start_time is required.")
@@ -99,7 +129,6 @@ def format_12h(time_24: str | None) -> str:
         return time_24
 
 def get_remote_state() -> dict:
-    """Fetch user state from Supabase."""
     url = f"{SUPABASE_URL}/rest/v1/user_discipline_state?user_id=eq.{USER_ID}&select=state"
     with httpx.Client(timeout=10.0) as client:
         resp = client.get(url, headers=HEADERS)
@@ -114,7 +143,6 @@ def get_remote_state() -> dict:
     return {"date": today, "routines": [], "routinesByDate": {}}
 
 def save_remote_state(state: dict) -> bool:
-    """Upsert state to Supabase."""
     url = f"{SUPABASE_URL}/rest/v1/user_discipline_state"
     payload = {
         "user_id": USER_ID,
@@ -152,7 +180,6 @@ def get_routines(date: str = "today") -> str:
     if not routines:
         return f"No routines currently scheduled for {target_date} in Routine Tracker."
     
-    # Sort chronologically by start_time
     def sort_key(r):
         st = r.get("start_time")
         if not st and r.get("time"):
@@ -175,25 +202,27 @@ def get_routines(date: str = "today") -> str:
 @mcp.tool()
 def add_routine(
     title: str,
+    date: str = "today",
     start_time: str = "08:00",
     end_time: str | None = None,
-    scheduled_date: str = "today",
+    duration: str | None = None,
     category: str = "General",
-    time: str | None = None,
-    date: str | None = None
+    scheduled_date: str | None = None,
+    time: str | None = None
 ) -> str:
     """
-    Add a single routine item with start_time and optional end_time for today, tomorrow, or a specific date.
+    Add a routine item with date, start_time, end_time, or duration.
     
     Args:
         title: What to do, e.g. "TensorFlow study"
+        date: 'today', 'tomorrow', or 'YYYY-MM-DD'
         start_time: Start time in 24h format "HH:MM" (e.g. "06:00")
         end_time: Optional end time in 24h format "HH:MM" (e.g. "06:45")
-        scheduled_date: 'today', 'tomorrow', or 'YYYY-MM-DD'
+        duration: Optional duration string (e.g. "45m", "1h", "1.5h"). Automatically calculates end_time if end_time is not provided.
         category: Optional tag, e.g. "Deep Learning", "Project"
     """
     try:
-        target_date = resolve_date(date or scheduled_date)
+        target_date = resolve_date(scheduled_date or date)
         raw_start = start_time
         raw_end = end_time
         
@@ -207,6 +236,12 @@ def add_routine(
                 
         s_time = normalize_time(raw_start) or "08:00"
         e_time = normalize_time(raw_end) if raw_end else None
+        
+        if not e_time and duration:
+            dm = parse_duration_to_minutes(duration)
+            if dm and dm > 0:
+                e_time = calculate_end_time(s_time, dm)
+                
         validate_time_range(s_time, e_time)
     except Exception as e:
         return f"Error: {e}"
@@ -243,14 +278,16 @@ def add_routine(
 @mcp.tool()
 def update_routine(
     routine_id: str,
+    date: str | None = None,
     start_time: str | None = None,
     end_time: str | None = None,
+    duration: str | None = None,
     title: str | None = None,
     category: str | None = None,
     scheduled_date: str | None = None
 ) -> str:
     """
-    Update an existing routine's start_time, end_time, title, or category independently using its ID.
+    Update an existing routine's start_time, end_time, duration, title, category, or date independently using its ID.
     """
     state = get_remote_state()
     routines_map = state.get("routinesByDate", {})
@@ -276,6 +313,12 @@ def update_routine(
         
         if start_time is not None:
             cur_start = normalize_time(start_time) or cur_start
+            
+        if duration is not None:
+            dm = parse_duration_to_minutes(duration)
+            if dm and dm > 0:
+                cur_end = calculate_end_time(cur_start, dm)
+                
         if end_time is not None:
             cur_end = normalize_time(end_time) if end_time else None
             
@@ -290,8 +333,9 @@ def update_routine(
         if category is not None:
             found_item["category"] = str(category).strip()
             
-        if scheduled_date:
-            new_date = resolve_date(scheduled_date)
+        target_new_date = scheduled_date or date
+        if target_new_date:
+            new_date = resolve_date(target_new_date)
             if new_date != found_date:
                 routines_map[found_date] = [r for r in routines_map[found_date] if r.get("id") != routine_id]
                 found_item["scheduled_date"] = new_date
@@ -339,6 +383,11 @@ def set_full_routine(routines: list[dict], date: str = "today") -> str:
         s_time = normalize_time(raw_start) or "08:00"
         e_time = normalize_time(raw_end) if raw_end else None
         
+        if not e_time and item.get("duration"):
+            dm = parse_duration_to_minutes(item.get("duration"))
+            if dm and dm > 0:
+                e_time = calculate_end_time(s_time, dm)
+                
         try:
             validate_time_range(s_time, e_time)
         except Exception:

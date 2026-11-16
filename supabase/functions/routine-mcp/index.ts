@@ -17,12 +17,9 @@ const CORS_HEADERS = {
 };
 
 // ==============================================================================
-// TIMEZONE & DATE / TIME UTILITIES (Asia/Kolkata)
+// TIMEZONE & DATE / TIME / DURATION UTILITIES (Asia/Kolkata)
 // ==============================================================================
 
-/**
- * Returns today's date formatted as YYYY-MM-DD in Asia/Kolkata timezone.
- */
 function getTodayKolkata(): string {
   try {
     return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
@@ -31,10 +28,6 @@ function getTodayKolkata(): string {
   }
 }
 
-/**
- * Resolves a date input ('today', 'tomorrow', 'yesterday', or YYYY-MM-DD)
- * to a strict YYYY-MM-DD string in Asia/Kolkata.
- */
 function resolveDate(dateInput?: string): string {
   const today = getTodayKolkata();
   if (!dateInput || dateInput.toLowerCase().trim() === "today" || dateInput.trim() === "") {
@@ -57,7 +50,6 @@ function resolveDate(dateInput?: string): string {
     return d.toISOString().split("T")[0];
   }
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
-    // Validate actual calendar date
     const d = new Date(s + "T12:00:00");
     if (!isNaN(d.getTime())) {
       return s;
@@ -66,10 +58,6 @@ function resolveDate(dateInput?: string): string {
   throw new Error(`Invalid date format '${dateInput}'. Expected YYYY-MM-DD, 'today', or 'tomorrow'.`);
 }
 
-/**
- * Normalizes any time representation to strict 24-hour HH:MM format.
- * Examples: '06:00', '6:00', '06:00 AM', '6:00 PM', '18:30:00' -> '06:00', '18:00', '18:30'
- */
 function normalizeTo24HourTime(timeStr?: string | null): string | null {
   if (!timeStr || typeof timeStr !== "string" || timeStr.trim() === "") {
     return null;
@@ -100,9 +88,42 @@ function normalizeTo24HourTime(timeStr?: string | null): string | null {
   return `${hStr}:${mStr}`;
 }
 
-/**
- * Validates that end_time is later than start_time.
- */
+function parseDurationToMinutes(dur?: string | number | null): number | null {
+  if (dur === undefined || dur === null) return null;
+  if (typeof dur === "number") return dur;
+  const s = String(dur).trim().toLowerCase();
+  if (!s) return null;
+
+  if (/^\d+$/.test(s)) return parseInt(s, 10);
+
+  let totalMinutes = 0;
+  let matched = false;
+
+  const hMatch = s.match(/(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hour|hours)/);
+  if (hMatch) {
+    totalMinutes += Math.round(parseFloat(hMatch[1]) * 60);
+    matched = true;
+  }
+
+  const mMatch = s.match(/(\d+)\s*(?:m|min|mins|minute|minutes)/);
+  if (mMatch) {
+    totalMinutes += parseInt(mMatch[1], 10);
+    matched = true;
+  }
+
+  if (matched && totalMinutes > 0) return totalMinutes;
+  return null;
+}
+
+function calculateEndTime(start24: string, durationMinutes: number): string {
+  const parts = start24.split(":");
+  const startMins = parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+  const endMins = (startMins + durationMinutes) % 1440;
+  const h = Math.floor(endMins / 60);
+  const m = endMins % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
 function validateTimeRange(start24: string, end24?: string | null): void {
   if (!start24) {
     throw new Error("start_time is required.");
@@ -114,9 +135,6 @@ function validateTimeRange(start24: string, end24?: string | null): void {
   }
 }
 
-/**
- * Converts 24-hour HH:MM to 12-hour display string (e.g. '06:00' -> '06:00 AM')
- */
 function to12HourDisplay(time24?: string | null): string {
   if (!time24) return "";
   const parts = time24.split(":");
@@ -129,7 +147,7 @@ function to12HourDisplay(time24?: string | null): string {
 }
 
 // ==============================================================================
-// DATABASE ACCESS & DUAL STORAGE (Relational routines table + user_discipline_state)
+// DATABASE ACCESS & DUAL STORAGE
 // ==============================================================================
 
 interface RoutineRecord {
@@ -140,15 +158,13 @@ interface RoutineRecord {
   scheduled_date: string;
   start_time: string;
   end_time: string | null;
+  duration?: string | null;
   time?: string;
   done: boolean;
   created_at?: string;
   updated_at?: string;
 }
 
-/**
- * Check if the relational public.routines table is present in Supabase
- */
 async function hasRoutinesTable(): Promise<boolean> {
   try {
     const { error } = await supabase.from("routines").select("id").limit(1);
@@ -158,9 +174,6 @@ async function hasRoutinesTable(): Promise<boolean> {
   }
 }
 
-/**
- * Read routines for a specific date from Supabase (relational table preferred, state fallback)
- */
 async function fetchRoutinesForDate(targetDate: string): Promise<RoutineRecord[]> {
   const useTable = await hasRoutinesTable();
 
@@ -191,7 +204,6 @@ async function fetchRoutinesForDate(targetDate: string): Promise<RoutineRecord[]
     }
   }
 
-  // Fallback to user_discipline_state JSON
   const { data } = await supabase
     .from("user_discipline_state")
     .select("state")
@@ -237,21 +249,14 @@ async function fetchRoutinesForDate(targetDate: string): Promise<RoutineRecord[]
   return list;
 }
 
-/**
- * Persist routines to both relational table and user_discipline_state to keep web app in sync.
- */
 async function syncStateAndTable(targetDate: string, updatedListForDate: RoutineRecord[]): Promise<void> {
-  // Sort chronologically
   updatedListForDate.sort((a, b) => a.start_time.localeCompare(b.start_time));
 
-  // 1. Sync to relational routines table if available
   const useTable = await hasRoutinesTable();
   if (useTable) {
     try {
-      // Delete existing records for that specific date only
       await supabase.from("routines").delete().eq("user_id", USER_ID).eq("scheduled_date", targetDate);
 
-      // Insert fresh records for that date
       if (updatedListForDate.length > 0) {
         const insertRows = updatedListForDate.map((r) => ({
           id: r.id,
@@ -271,7 +276,6 @@ async function syncStateAndTable(targetDate: string, updatedListForDate: Routine
     }
   }
 
-  // 2. Sync to user_discipline_state for Realtime web app compatibility
   const { data } = await supabase
     .from("user_discipline_state")
     .select("state")
@@ -284,7 +288,6 @@ async function syncStateAndTable(targetDate: string, updatedListForDate: Routine
     state.routinesByDate = {};
   }
 
-  // Format list for web app
   const appList = updatedListForDate.map((r) => ({
     id: r.id,
     title: r.title,
@@ -300,7 +303,6 @@ async function syncStateAndTable(targetDate: string, updatedListForDate: Routine
 
   state.routinesByDate[targetDate] = appList;
 
-  // Keep state.routines in sync if targetDate is today
   if (targetDate === (state.date || today)) {
     state.routines = appList;
   }
@@ -333,38 +335,41 @@ const TOOLS = [
   {
     name: "add_routine",
     description:
-      "Create a new routine with scheduled_date, start_time, end_time, title, and optional category. Validates that end_time is later than start_time.",
+      "Create a new routine. Supports date (scheduled_date), start_time, end_time, duration, title, and category.",
     inputSchema: {
       type: "object",
       properties: {
         title: {
           type: "string",
-          description: "Routine title or task description, e.g. 'TensorFlow study' or 'Backend engineering'",
+          description: "Routine title or task description (e.g. 'TensorFlow study', 'Revision', 'Data Science class')",
+        },
+        date: {
+          type: "string",
+          description: "Calendar date for routine: 'today', 'tomorrow', 'yesterday', or 'YYYY-MM-DD'. Defaults to today.",
+        },
+        scheduled_date: {
+          type: "string",
+          description: "Alias for date.",
         },
         start_time: {
           type: "string",
-          description: "Start time in 24-hour 'HH:MM' format (e.g. '06:00', '09:30', '17:30') or 12-hour format.",
+          description: "Start time in 24-hour 'HH:MM' (e.g. '06:00', '09:30', '17:30') or 12-hour format.",
         },
         end_time: {
           type: "string",
           description: "Optional end time in 24-hour 'HH:MM' format (e.g. '06:45', '11:30', '19:00'). Must be later than start_time.",
         },
-        scheduled_date: {
+        duration: {
           type: "string",
-          description: "Calendar date: 'today', 'tomorrow', 'yesterday', or 'YYYY-MM-DD'. Defaults to today in Asia/Kolkata.",
+          description: "Duration of the task, e.g. '45m', '1h', '1.5h', '30 mins'. If provided, end_time is automatically calculated from start_time + duration.",
         },
         category: {
           type: "string",
           description: "Optional category tag, e.g. 'Deep Learning', 'Backend', 'Project', 'Revision', 'Class'.",
         },
-        // Backward-compatibility parameter aliases:
         time: {
           type: "string",
-          description: "Alternative single time or time range string (e.g. '06:00 - 06:45' or '06:00 AM').",
-        },
-        date: {
-          type: "string",
-          description: "Alias for scheduled_date.",
+          description: "Alternative legacy time string, e.g. '06:00 - 06:45' or '06:00 AM'.",
         },
       },
       required: ["title"],
@@ -373,7 +378,7 @@ const TOOLS = [
   {
     name: "update_routine",
     description:
-      "Update an existing routine's start_time, end_time, title, category, or scheduled_date independently using its stable routine ID. Validates time range.",
+      "Update an existing routine's start_time, end_time, duration, title, category, or date independently using its stable ID.",
     inputSchema: {
       type: "object",
       properties: {
@@ -381,9 +386,13 @@ const TOOLS = [
           type: "string",
           description: "Stable ID of the routine to update (e.g. 'rt-1794834149828-0')",
         },
+        date: {
+          type: "string",
+          description: "Date of the routine ('today', 'tomorrow', or 'YYYY-MM-DD').",
+        },
         scheduled_date: {
           type: "string",
-          description: "Date of the routine ('today', 'tomorrow', or 'YYYY-MM-DD'). Optional if ID is unique.",
+          description: "Alias for date.",
         },
         start_time: {
           type: "string",
@@ -392,6 +401,10 @@ const TOOLS = [
         end_time: {
           type: "string",
           description: "Updated end time in 'HH:MM' format. Must be later than start_time.",
+        },
+        duration: {
+          type: "string",
+          description: "Updated duration (e.g. '45m', '1h').",
         },
         title: {
           type: "string",
@@ -408,13 +421,13 @@ const TOOLS = [
   {
     name: "set_full_routine",
     description:
-      "Replace the routine schedule only for the specified date with a curated list of items. Never deletes or overwrites routines from other dates. Preserves completion status where appropriate.",
+      "Replace the routine schedule only for the specified date with a list of items. Supports date, start_time, end_time, duration, and category for each routine.",
     inputSchema: {
       type: "object",
       properties: {
         date: {
           type: "string",
-          description: "Target calendar date: 'today', 'tomorrow', or 'YYYY-MM-DD'. Defaults to today.",
+          description: "Target calendar date: 'today', 'tomorrow', or 'YYYY-MM-DD'. Defaults to today in Asia/Kolkata.",
         },
         routines: {
           type: "array",
@@ -425,7 +438,8 @@ const TOOLS = [
               title: { type: "string" },
               start_time: { type: "string", description: "Start time 'HH:MM'" },
               end_time: { type: "string", description: "End time 'HH:MM'" },
-              time: { type: "string", description: "Alternative legacy time string" },
+              duration: { type: "string", description: "Duration, e.g. '45m', '1h', '1.5h'" },
+              date: { type: "string", description: "Date for this routine" },
               category: { type: "string" },
               done: { type: "boolean" },
             },
@@ -525,9 +539,8 @@ async function handleAddRoutine(args: any) {
     throw new Error("title is required.");
   }
 
-  const targetDate = resolveDate(args.scheduled_date || args.date);
+  const targetDate = resolveDate(args.date || args.scheduled_date);
 
-  // Extract start_time and end_time (handling aliases and ranges)
   let rawStart = args.start_time;
   let rawEnd = args.end_time;
 
@@ -543,7 +556,7 @@ async function handleAddRoutine(args: any) {
   }
 
   if (!rawStart) {
-    rawStart = "08:00"; // graceful default
+    rawStart = "08:00";
   }
 
   const start_time = normalizeTo24HourTime(rawStart);
@@ -551,12 +564,19 @@ async function handleAddRoutine(args: any) {
     throw new Error(`Invalid start_time format: '${rawStart}'.`);
   }
 
-  const end_time = rawEnd ? normalizeTo24HourTime(rawEnd) : null;
+  // Handle duration to calculate end_time if end_time not provided
+  let end_time = rawEnd ? normalizeTo24HourTime(rawEnd) : null;
+  if (!end_time && args.duration) {
+    const durMins = parseDurationToMinutes(args.duration);
+    if (durMins && durMins > 0) {
+      end_time = calculateEndTime(start_time, durMins);
+    }
+  }
+
   if (rawEnd && !end_time) {
     throw new Error(`Invalid end_time format: '${rawEnd}'.`);
   }
 
-  // Validate end_time is later than start_time
   validateTimeRange(start_time, end_time);
 
   const category = args.category ? String(args.category).trim() : "General";
@@ -569,6 +589,7 @@ async function handleAddRoutine(args: any) {
     scheduled_date: targetDate,
     start_time,
     end_time,
+    duration: args.duration || null,
     done: false,
   };
 
@@ -590,8 +611,7 @@ async function handleUpdateRoutine(args: any) {
     throw new Error("routine_id is required.");
   }
 
-  // Determine target date to search in
-  let targetDate = args.scheduled_date ? resolveDate(args.scheduled_date) : null;
+  let targetDate = (args.date || args.scheduled_date) ? resolveDate(args.date || args.scheduled_date) : null;
   let foundRoutine: RoutineRecord | null = null;
   let foundDate = targetDate;
 
@@ -603,14 +623,9 @@ async function handleUpdateRoutine(args: any) {
       foundDate = targetDate;
     }
   } else {
-    // Search today, tomorrow, and past dates
     const today = getTodayKolkata();
-    const candidateDates = [today];
-    const tmrw = resolveDate("tomorrow");
-    const yest = resolveDate("yesterday");
-    candidateDates.push(tmrw, yest);
+    const candidateDates = [today, resolveDate("tomorrow"), resolveDate("yesterday")];
 
-    // Also check state dates
     const { data } = await supabase
       .from("user_discipline_state")
       .select("state")
@@ -638,7 +653,6 @@ async function handleUpdateRoutine(args: any) {
     throw new Error(`Routine with ID '${routineId}' not found.`);
   }
 
-  // Update fields independently
   if (args.title !== undefined) {
     foundRoutine.title = String(args.title).trim();
   }
@@ -655,6 +669,13 @@ async function handleUpdateRoutine(args: any) {
     updatedStart = s;
   }
 
+  if (args.duration !== undefined) {
+    const durMins = parseDurationToMinutes(args.duration);
+    if (durMins && durMins > 0) {
+      updatedEnd = calculateEndTime(updatedStart, durMins);
+    }
+  }
+
   if (args.end_time !== undefined) {
     if (args.end_time === null || args.end_time === "") {
       updatedEnd = null;
@@ -665,20 +686,16 @@ async function handleUpdateRoutine(args: any) {
     }
   }
 
-  // Validate time range
   validateTimeRange(updatedStart, updatedEnd);
   foundRoutine.start_time = updatedStart;
   foundRoutine.end_time = updatedEnd;
 
-  // Handle date relocation if requested
-  const newDate = args.scheduled_date ? resolveDate(args.scheduled_date) : foundDate;
+  const newDate = (args.date || args.scheduled_date) ? resolveDate(args.date || args.scheduled_date) : foundDate;
   if (newDate !== foundDate) {
-    // Remove from old date
     const oldList = await fetchRoutinesForDate(foundDate);
     const filteredOld = oldList.filter((r) => r.id !== routineId);
     await syncStateAndTable(foundDate, filteredOld);
 
-    // Add to new date
     foundRoutine.scheduled_date = newDate;
     const newList = await fetchRoutinesForDate(newDate);
     newList.push(foundRoutine);
@@ -706,7 +723,6 @@ async function handleSetFullRoutine(args: any) {
     throw new Error("'routines' array is required.");
   }
 
-  // Fetch existing routines for this date to preserve completion status if titles/times match
   const existingList = await fetchRoutinesForDate(targetDate);
   const existingMap = new Map<string, RoutineRecord>();
   existingList.forEach((r) => {
@@ -740,11 +756,17 @@ async function handleSetFullRoutine(args: any) {
     }
 
     const start_time = normalizeTo24HourTime(rawStart) || "08:00";
-    const end_time = rawEnd ? normalizeTo24HourTime(rawEnd) : null;
+    let end_time = rawEnd ? normalizeTo24HourTime(rawEnd) : null;
+
+    if (!end_time && item.duration) {
+      const durMins = parseDurationToMinutes(item.duration);
+      if (durMins && durMins > 0) {
+        end_time = calculateEndTime(start_time, durMins);
+      }
+    }
 
     validateTimeRange(start_time, end_time);
 
-    // Check existing match to preserve completion status
     const existing = existingMap.get(item.id) || existingMap.get(title.toLowerCase());
     const done = item.done !== undefined ? Boolean(item.done) : existing ? existing.done : false;
     const category = item.category ? String(item.category).trim() : existing ? existing.category : "General";
@@ -761,11 +783,10 @@ async function handleSetFullRoutine(args: any) {
     });
   }
 
-  // Replace routines ONLY for targetDate (other dates untouched)
   await syncStateAndTable(targetDate, newList);
 
   return {
-    message: `Schedule for ${targetDate} replaced successfully with ${newList.length} items. Other dates were preserved.`,
+    message: `Schedule for ${targetDate} replaced successfully with ${newList.length} items. Other dates preserved.`,
     scheduled_date: targetDate,
     total: newList.length,
     routines: newList,
@@ -786,7 +807,6 @@ async function handleToggleRoutine(args: any) {
 
   const searchDate = async (d: string) => {
     const list = await fetchRoutinesForDate(d);
-    // Prioritize ID match over title
     let match = list.find((r) => r.id === targetIdOrTitle);
     if (!match) {
       match = list.find((r) => r.title.toLowerCase().includes(targetIdOrTitle.toLowerCase()));
@@ -832,7 +852,6 @@ async function handleToggleRoutine(args: any) {
 
 async function handleClearAllRoutines(args: any) {
   if (args.confirm_all === true) {
-    // Delete all across all dates
     const useTable = await hasRoutinesTable();
     if (useTable) {
       await supabase.from("routines").delete().eq("user_id", USER_ID);
@@ -874,7 +893,7 @@ serve(async (req) => {
             result: {
               protocolVersion: "2024-11-05",
               capabilities: { tools: {} },
-              serverInfo: { name: "Routine Tracker Live MCP", version: "2.0.0" },
+              serverInfo: { name: "Routine Tracker Live MCP", version: "2.1.0" },
             },
           }),
           { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
@@ -962,11 +981,10 @@ serve(async (req) => {
     }
   }
 
-  // GET / Info Endpoint
   return new Response(
     JSON.stringify({
       status: "online",
-      server: "Routine Tracker Live MCP v2.0",
+      server: "Routine Tracker Live MCP v2.1",
       timezone: "Asia/Kolkata",
       tools: TOOLS.map((t) => t.name),
     }),
