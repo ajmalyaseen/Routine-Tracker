@@ -154,6 +154,7 @@ interface RoutineRecord {
   id: string;
   user_id?: string;
   title: string;
+  description?: string;
   category: string;
   scheduled_date: string;
   start_time: string;
@@ -190,6 +191,7 @@ async function fetchRoutinesForDate(targetDate: string): Promise<RoutineRecord[]
         id: r.id,
         user_id: r.user_id,
         title: r.title,
+        description: r.description || "",
         category: r.category || "General",
         scheduled_date: r.scheduled_date,
         start_time: r.start_time ? r.start_time.substring(0, 5) : "08:00",
@@ -236,6 +238,7 @@ async function fetchRoutinesForDate(targetDate: string): Promise<RoutineRecord[]
       id: item.id || `rt-${Date.now()}`,
       user_id: USER_ID,
       title: item.title || "Untitled",
+      description: item.description || "",
       category: item.category || "General",
       scheduled_date: targetDate,
       start_time: sTime,
@@ -262,6 +265,7 @@ async function syncStateAndTable(targetDate: string, updatedListForDate: Routine
           id: r.id,
           user_id: USER_ID,
           title: r.title,
+          description: r.description || "",
           category: r.category || "General",
           scheduled_date: targetDate,
           start_time: r.start_time,
@@ -291,6 +295,7 @@ async function syncStateAndTable(targetDate: string, updatedListForDate: Routine
   const appList = updatedListForDate.map((r) => ({
     id: r.id,
     title: r.title,
+    description: r.description || "",
     category: r.category,
     scheduled_date: targetDate,
     start_time: r.start_time,
@@ -342,6 +347,10 @@ const TOOLS = [
         title: {
           type: "string",
           description: "Routine title or task description (e.g. 'TensorFlow study', 'Revision', 'Data Science class')",
+        },
+        description: {
+          type: "string",
+          description: "Optional description or specific topic names, e.g. 'Window functions, CTEs, GROUP BY' or 'Loss functions, Backprop'.",
         },
         date: {
           type: "string",
@@ -410,6 +419,10 @@ const TOOLS = [
           type: "string",
           description: "Updated routine title.",
         },
+        description: {
+          type: "string",
+          description: "Updated description or topic names.",
+        },
         category: {
           type: "string",
           description: "Updated category tag.",
@@ -421,7 +434,7 @@ const TOOLS = [
   {
     name: "set_full_routine",
     description:
-      "Replace the routine schedule only for the specified date with a list of items. Supports date, start_time, end_time, duration, and category for each routine.",
+      "Replace the routine schedule only for the specified date with a list of items. Supports date, start_time, end_time, duration, title, description, and category for each routine.",
     inputSchema: {
       type: "object",
       properties: {
@@ -436,6 +449,7 @@ const TOOLS = [
             type: "object",
             properties: {
               title: { type: "string" },
+              description: { type: "string", description: "Optional description or specific topic names" },
               start_time: { type: "string", description: "Start time 'HH:MM'" },
               end_time: { type: "string", description: "End time 'HH:MM'" },
               duration: { type: "string", description: "Duration, e.g. '45m', '1h', '1.5h'" },
@@ -522,7 +536,8 @@ async function handleGetRoutines(args: any) {
     const status = r.done ? "[x]" : "[ ]";
     const timeDisplay = r.end_time ? `${r.start_time} - ${r.end_time}` : `${r.start_time}`;
     const cat = r.category ? ` [${r.category}]` : "";
-    lines.push(`${idx + 1}. ${status} ${timeDisplay} | ${r.title}${cat} (ID: ${r.id}, Date: ${r.scheduled_date})`);
+    const desc = r.description ? ` (${r.description})` : "";
+    lines.push(`${idx + 1}. ${status} ${timeDisplay} | ${r.title}${desc}${cat} (ID: ${r.id}, Date: ${r.scheduled_date})`);
   });
 
   return {
@@ -580,11 +595,13 @@ async function handleAddRoutine(args: any) {
   validateTimeRange(start_time, end_time);
 
   const category = args.category ? String(args.category).trim() : "General";
+  const description = args.description ? String(args.description).trim() : "";
 
   const newRoutine: RoutineRecord = {
     id: `rt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
     user_id: USER_ID,
     title,
+    description,
     category,
     scheduled_date: targetDate,
     start_time,
@@ -655,6 +672,9 @@ async function handleUpdateRoutine(args: any) {
 
   if (args.title !== undefined) {
     foundRoutine.title = String(args.title).trim();
+  }
+  if (args.description !== undefined) {
+    foundRoutine.description = String(args.description).trim();
   }
   if (args.category !== undefined) {
     foundRoutine.category = String(args.category).trim();
@@ -770,11 +790,13 @@ async function handleSetFullRoutine(args: any) {
     const existing = existingMap.get(item.id) || existingMap.get(title.toLowerCase());
     const done = item.done !== undefined ? Boolean(item.done) : existing ? existing.done : false;
     const category = item.category ? String(item.category).trim() : existing ? existing.category : "General";
+    const description = item.description !== undefined ? String(item.description).trim() : existing?.description || "";
 
     newList.push({
       id: item.id || existing?.id || `rt-${now}-${idx}`,
       user_id: USER_ID,
       title,
+      description,
       category,
       scheduled_date: targetDate,
       start_time,

@@ -182,8 +182,42 @@ def run_tests():
     assert "TensorFlow study" in res12_today_check, "Today was accidentally cleared!"
     print("PASS: Date-scoped clear cleared tomorrow while completely preserving today\n")
     
+    # 13. Verify title + description support (separate topic notes)
+    print("TEST 13: Verify title + description field support...")
+    res13_add = mcp_server.add_routine(
+        title="SQL Practice",
+        description="Window functions, CTEs, GROUP BY",
+        start_time="14:00",
+        end_time="15:30",
+        scheduled_date="today",
+        category="Database"
+    )
+    print("Add routine result:", res13_add)
+    assert "Added routine" in res13_add, f"Failed to add with description: {res13_add}"
+    
+    # Retrieve and check description
+    res13_get = mcp_server.get_routines("today")
+    assert "SQL Practice (Window functions, CTEs, GROUP BY)" in res13_get, f"Description not shown in get_routines: {res13_get}"
+    
+    # Update description
+    state13 = mcp_server.get_remote_state()
+    today_items = state13.get("routinesByDate", {}).get(today, [])
+    sql_item = next((r for r in today_items if r.get("title") == "SQL Practice"), None)
+    assert sql_item is not None, "SQL Practice item not found for update"
+    
+    res13_upd = mcp_server.update_routine(
+        routine_id=sql_item["id"],
+        description="Advanced recursive CTEs & Lead/Lag"
+    )
+    print("Update description result:", res13_upd)
+    assert "updated successfully" in res13_upd, f"Failed: {res13_upd}"
+    
+    res13_verify = mcp_server.get_routines("today")
+    assert "SQL Practice (Advanced recursive CTEs & Lead/Lag)" in res13_verify, f"Updated description not found: {res13_verify}"
+    print("PASS: Title + Description field fully supported, retrieved, and updated!\n")
+
     print("==================================================================")
-    print("ALL 12 TESTS PASSED PERFECTLY! 100% SUCCESS")
+    print("ALL 13 TESTS PASSED PERFECTLY! 100% SUCCESS")
     print("==================================================================")
 
 if __name__ == "__main__":

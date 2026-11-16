@@ -195,13 +195,15 @@ def get_routines(date: str = "today") -> str:
         e_time = r.get("end_time") or (normalize_time(r.get("time", "").split("-")[1]) if "-" in r.get("time", "") else None)
         time_str = f"{s_time} - {e_time}" if e_time else s_time
         cat = f" [{r.get('category')}]" if r.get("category") else ""
-        lines.append(f"{idx}. {status} {time_str} | {r.get('title')}{cat} (ID: {r.get('id')}, Date: {target_date})")
+        desc = f" ({r.get('description')})" if r.get("description") else ""
+        lines.append(f"{idx}. {status} {time_str} | {r.get('title')}{desc}{cat} (ID: {r.get('id')}, Date: {target_date})")
     
     return "\n".join(lines)
 
 @mcp.tool()
 def add_routine(
     title: str,
+    description: str = "",
     date: str = "today",
     start_time: str = "08:00",
     end_time: str | None = None,
@@ -211,10 +213,11 @@ def add_routine(
     time: str | None = None
 ) -> str:
     """
-    Add a routine item with date, start_time, end_time, or duration.
+    Add a routine item with title, optional description (e.g. topic names), date, start_time, end_time, or duration.
     
     Args:
         title: What to do, e.g. "TensorFlow study"
+        description: Specific topic names or notes, e.g. "Loss functions, Backprop, Gradient Descent"
         date: 'today', 'tomorrow', or 'YYYY-MM-DD'
         start_time: Start time in 24h format "HH:MM" (e.g. "06:00")
         end_time: Optional end time in 24h format "HH:MM" (e.g. "06:45")
@@ -256,6 +259,7 @@ def add_routine(
     new_item = {
         "id": item_id,
         "title": title.strip(),
+        "description": description.strip(),
         "start_time": s_time,
         "end_time": e_time,
         "time": time_display,
@@ -283,11 +287,12 @@ def update_routine(
     end_time: str | None = None,
     duration: str | None = None,
     title: str | None = None,
+    description: str | None = None,
     category: str | None = None,
     scheduled_date: str | None = None
 ) -> str:
     """
-    Update an existing routine's start_time, end_time, duration, title, category, or date independently using its ID.
+    Update an existing routine's start_time, end_time, duration, title, description, category, or date independently using its ID.
     """
     state = get_remote_state()
     routines_map = state.get("routinesByDate", {})
@@ -330,6 +335,8 @@ def update_routine(
         
         if title is not None:
             found_item["title"] = str(title).strip()
+        if description is not None:
+            found_item["description"] = str(description).strip()
         if category is not None:
             found_item["category"] = str(category).strip()
             
@@ -398,6 +405,7 @@ def set_full_routine(routines: list[dict], date: str = "today") -> str:
         new_routines.append({
             "id": item.get("id") or f"rt-{base_ts}-{idx}",
             "title": item.get("title", f"Routine {idx+1}"),
+            "description": item.get("description", ""),
             "start_time": s_time,
             "end_time": e_time,
             "time": time_display,

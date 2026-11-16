@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS public.routines (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL DEFAULT 'routine-master-user',
     title TEXT NOT NULL,
+    description TEXT DEFAULT '',
     category TEXT DEFAULT 'General',
     scheduled_date DATE NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::DATE,
     start_time TIME NOT NULL,
@@ -19,6 +20,7 @@ CREATE TABLE IF NOT EXISTS public.routines (
 ALTER TABLE public.routines ADD COLUMN IF NOT EXISTS scheduled_date DATE DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::DATE;
 ALTER TABLE public.routines ADD COLUMN IF NOT EXISTS start_time TIME;
 ALTER TABLE public.routines ADD COLUMN IF NOT EXISTS end_time TIME;
+ALTER TABLE public.routines ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '';
 ALTER TABLE public.routines ADD COLUMN IF NOT EXISTS user_id TEXT DEFAULT 'routine-master-user';
 ALTER TABLE public.routines ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'General';
 ALTER TABLE public.routines ADD COLUMN IF NOT EXISTS done BOOLEAN DEFAULT FALSE;

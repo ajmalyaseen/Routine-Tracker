@@ -290,8 +290,14 @@
 
         <!-- Task Title -->
         <div>
-          <label class="block text-[11px] font-medium text-zinc-400 mb-1">Routine Title / Task Description</label>
-          <input type="text" id="inputTitle" placeholder="e.g. Master Window Functions & LeetCode Hard" required class="w-full px-3.5 py-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs sm:text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-brand-500">
+          <label class="block text-[11px] font-medium text-zinc-400 mb-1">Routine Title</label>
+          <input type="text" id="inputTitle" placeholder="e.g. Master Window Functions" required class="w-full px-3.5 py-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs sm:text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-brand-500">
+        </div>
+
+        <!-- Task Description / Topic Notes -->
+        <div>
+          <label class="block text-[11px] font-medium text-zinc-400 mb-1">Description / Topic Notes (Optional)</label>
+          <input type="text" id="inputDescription" placeholder="e.g. CTEs, RANK(), DENSE_RANK(), Partition By" class="w-full px-3.5 py-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs sm:text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-brand-500">
         </div>
 
         <!-- Submit Button -->
@@ -428,6 +434,7 @@
         <h3 id="detailTitle" class="text-lg sm:text-xl font-bold text-white leading-snug break-words">
           Routine Title Here
         </h3>
+        <p id="detailDescription" class="text-xs sm:text-sm text-zinc-400 leading-relaxed break-words hidden"></p>
       </div>
 
       <!-- Action Buttons -->
@@ -1123,10 +1130,13 @@
                 ${item.start_time && item.end_time ? `${item.start_time} - ${item.end_time}` : (item.time || item.start_time || '08:00')}
               </span>
 
-              <!-- Title -->
-              <span class="text-xs sm:text-sm font-medium truncate select-none ${item.done ? 'text-zinc-500 line-through' : 'text-zinc-100'}">
-                ${item.title}
-              </span>
+              <!-- Title & Description -->
+              <div class="flex flex-col min-w-0 pr-1 select-none">
+                <span class="text-xs sm:text-sm font-medium truncate ${item.done ? 'text-zinc-500 line-through' : 'text-zinc-100'}">
+                  ${item.title}
+                </span>
+                ${item.description ? `<span class="text-[11px] text-zinc-400 truncate ${item.done ? 'line-through text-zinc-600' : ''}">${item.description}</span>` : ''}
+              </div>
 
               <!-- Optional Tag -->
               ${item.category ? `<span class="hidden sm:inline-block text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-400 shrink-0">${item.category}</span>` : ''}
@@ -1163,6 +1173,16 @@
 
       document.getElementById('detailTime').innerText = item.time;
       document.getElementById('detailTitle').innerText = item.title;
+      const descEl = document.getElementById('detailDescription');
+      if (descEl) {
+        if (item.description) {
+          descEl.innerText = item.description;
+          descEl.classList.remove('hidden');
+        } else {
+          descEl.innerText = '';
+          descEl.classList.add('hidden');
+        }
+      }
       document.getElementById('detailCategoryBadge').innerText = item.category || 'Routine';
 
       const statusPill = document.getElementById('detailStatusPill');
@@ -1373,11 +1393,13 @@
       const startEl = document.getElementById('inputStartTime');
       const endEl = document.getElementById('inputEndTime');
       const titleInput = document.getElementById('inputTitle');
+      const descInput = document.getElementById('inputDescription');
       const tagInput = document.getElementById('inputTag');
 
       const startVal = startEl ? startEl.value : '';
       const endVal = endEl ? endEl.value : '';
       const title = titleInput ? titleInput.value.trim() : '';
+      const description = descInput ? descInput.value.trim() : '';
       const tag = tagInput ? tagInput.value.trim() || 'General' : 'General';
 
       if (!title) {
@@ -1429,6 +1451,7 @@
         end_time: endVal,
         time: formattedTime,
         title: title,
+        description: description,
         category: tag,
         done: false
       });
@@ -1438,6 +1461,7 @@
       
       // Reset form & close
       titleInput.value = '';
+      if (descInput) descInput.value = '';
       toggleAddForm();
 
       saveLocal();
