@@ -633,20 +633,60 @@
     }
 
     // LOAD & SAVE
+    function applyIncomingState(incomingState) {
+      if (!incomingState || typeof incomingState !== 'object') return;
+
+      // 1. Load routinesByDate if present
+      if (incomingState.routinesByDate && typeof incomingState.routinesByDate === 'object') {
+        routinesByDate = incomingState.routinesByDate;
+      }
+
+      // Ensure array exists for today
+      if (!routinesByDate[todayDate] || !Array.isArray(routinesByDate[todayDate])) {
+        routinesByDate[todayDate] = [];
+      }
+
+      // 2. CRITICAL MERGE: If incomingState.routines has items (e.g. added by ChatGPT or MCP flatly),
+      // merge them into routinesByDate[todayDate] so no AI-added routine is ever lost!
+      if (Array.isArray(incomingState.routines) && incomingState.routines.length > 0) {
+        const todayList = routinesByDate[todayDate];
+        incomingState.routines.forEach(item => {
+          if (!item || !item.title) return;
+          const exists = todayList.some(r => 
+            (item.id && r.id === item.id) || 
+            (r.time === item.time && r.title.toLowerCase().trim() === item.title.toLowerCase().trim())
+          );
+          if (!exists) {
+            todayList.push({
+              id: item.id || `rt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+              time: item.time || '',
+              title: item.title || '',
+              category: item.category || '',
+              done: Boolean(item.done)
+            });
+          }
+        });
+      }
+
+      if (incomingState.history) dailyHistory = incomingState.history;
+      if (incomingState.notes) dailyNotes = incomingState.notes;
+      if (incomingState.streak) streakCount = incomingState.streak;
+      if (incomingState.bestStreak) bestStreakCount = incomingState.bestStreak;
+
+      cleanAllStoredRoutines();
+      saveLocal();
+      updateDateUI();
+      render();
+      renderCalendarStrip();
+      updateProgress();
+    }
+
     function loadLocal() {
       const saved = localStorage.getItem('user_routines_data');
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
-          if (parsed.routinesByDate && typeof parsed.routinesByDate === 'object') {
-            routinesByDate = parsed.routinesByDate;
-          } else if (parsed.routines && Array.isArray(parsed.routines)) {
-            routinesByDate[todayDate] = parsed.routines;
-          }
-          if (parsed.history) dailyHistory = parsed.history;
-          if (parsed.notes) dailyNotes = parsed.notes;
-          if (parsed.streak) streakCount = parsed.streak;
-          if (parsed.bestStreak) bestStreakCount = parsed.bestStreak;
+          applyIncomingState(parsed);
           if (parsed.date && parsed.date !== todayDate) {
             handleNewDayRollover(parsed.date);
           }
@@ -931,21 +971,7 @@
           .single();
 
         if (data && data.state) {
-          if (data.state.routinesByDate && typeof data.state.routinesByDate === 'object') {
-            routinesByDate = data.state.routinesByDate;
-          } else if (Array.isArray(data.state.routines) && data.state.routines.length > 0) {
-            routinesByDate[todayDate] = data.state.routines;
-          }
-          if (data.state.history) dailyHistory = data.state.history;
-          if (data.state.notes) dailyNotes = data.state.notes;
-          if (data.state.streak) streakCount = data.state.streak;
-          if (data.state.bestStreak) bestStreakCount = data.state.bestStreak;
-
-          cleanAllStoredRoutines();
-          saveLocal();
-          updateDateUI();
-          render();
-          updateProgress();
+          applyIncomingState(data.state);
           updateCloudStatus(true);
         }
       } catch (e) {
@@ -953,7 +979,7 @@
       }
     }
 
-    // LISTEN FOR REALTIME CHANGES (e.g. Claude MCP inserts a routine)
+    // LISTEN FOR REALTIME CHANGES (e.g. Claude / ChatGPT MCP inserts a routine)
     function subscribeToRealtime() {
       if (!sbClient) return;
       try {
@@ -961,20 +987,7 @@
           .channel('public:user_discipline_state')
           .on('postgres_changes', { event: '*', schema: 'public', table: 'user_discipline_state' }, payload => {
             if (payload.new && payload.new.user_id === USER_ID && payload.new.state) {
-              if (payload.new.state.routinesByDate && typeof payload.new.state.routinesByDate === 'object') {
-                routinesByDate = payload.new.state.routinesByDate;
-              } else if (Array.isArray(payload.new.state.routines)) {
-                routinesByDate[todayDate] = payload.new.state.routines;
-              }
-              if (payload.new.state.history) dailyHistory = payload.new.state.history;
-              if (payload.new.state.notes) dailyNotes = payload.new.state.notes;
-              if (payload.new.state.streak) streakCount = payload.new.state.streak;
-              if (payload.new.state.bestStreak) bestStreakCount = payload.new.state.bestStreak;
-              cleanAllStoredRoutines();
-              saveLocal();
-              updateDateUI();
-              render();
-              updateProgress();
+              applyIncomingState(payload.new.state);
             }
           })
           .subscribe();

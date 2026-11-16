@@ -1,4 +1,4 @@
-const CACHE_NAME = 'routine-tracker-v12';
+const CACHE_NAME = 'routine-tracker-v13';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
