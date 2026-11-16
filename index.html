@@ -136,6 +136,46 @@
   <!-- MAIN VIEWPORT -->
   <main class="max-w-3xl mx-auto w-full px-5 sm:px-8 py-6 space-y-6 flex-1">
 
+    <!-- DATE NAVIGATION / DAY SELECTOR (TODAY, TOMORROW, NEXT DAY) -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <!-- Quick Day Switcher Pills -->
+      <div class="flex items-center gap-1 p-1 rounded-2xl bg-zinc-900 border border-zinc-800 text-xs font-semibold self-start sm:self-auto">
+        <button id="dayBtn-today" onclick="switchDayOffset(0)" class="px-3.5 py-1.5 rounded-xl bg-brand-500 text-white shadow-sm transition">
+          Today
+        </button>
+        <button id="dayBtn-tomorrow" onclick="switchDayOffset(1)" class="px-3.5 py-1.5 rounded-xl text-zinc-400 hover:text-white transition">
+          Tomorrow
+        </button>
+        <button id="dayBtn-next" onclick="switchDayOffset(2)" class="px-3.5 py-1.5 rounded-xl text-zinc-400 hover:text-white transition">
+          Day After
+        </button>
+      </div>
+
+      <!-- Current Selected Date Label & Calendar Picker -->
+      <div class="flex items-center gap-2 self-end sm:self-auto">
+        <span id="selectedDateBadge" class="text-xs font-mono font-medium px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-300">
+          Loading...
+        </span>
+        <label for="calendarDateInput" class="p-2 rounded-xl bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-zinc-400 hover:text-white cursor-pointer transition" title="Pick any date">
+          <i data-lucide="calendar" class="w-4 h-4"></i>
+        </label>
+        <input type="date" id="calendarDateInput" class="hidden" onchange="switchSpecificDate(this.value)">
+      </div>
+    </div>
+
+    <!-- FUTURE DAY PLANNING BANNER (APPEARS WHEN VIEWING TOMORROW / FUTURE) -->
+    <div id="futureDayBanner" class="hidden p-3.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+      <div class="flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-brand-400"></span>
+        <span id="futureDayBannerText" class="text-xs text-zinc-300 font-medium">Planning routine for Tomorrow</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <button onclick="copyScheduleFromToday()" class="px-3 py-1 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-200 text-xs font-medium border border-zinc-700/60 transition flex items-center gap-1.5">
+          <i data-lucide="copy" class="w-3.5 h-3.5"></i> Copy Schedule from Today
+        </button>
+      </div>
+    </div>
+
     <!-- MINIMAL PROGRESS CARD & WEEKLY CONSISTENCY STRIP -->
     <div class="p-5 rounded-2xl bg-zinc-900/60 border border-zinc-800/80 backdrop-blur space-y-4">
       <div class="flex items-center justify-between text-xs">
@@ -354,11 +394,28 @@
     ];
 
     // STATE
-    let routines = JSON.parse(JSON.stringify(DEFAULT_ROUTINES));
     let todayDate = new Date().toISOString().split('T')[0];
+    let selectedDate = todayDate;
+    let selectedDayOffset = 0; // 0 = Today, 1 = Tomorrow, 2 = Day After, -1 = Custom
+    let routinesByDate = {};
     let streakCount = 1;
     let bestStreakCount = 1;
     let dailyHistory = {};
+
+    function getRoutinesForDate(dateKey) {
+      if (!routinesByDate[dateKey]) {
+        if (dateKey === todayDate) {
+          routinesByDate[dateKey] = JSON.parse(JSON.stringify(DEFAULT_ROUTINES));
+        } else {
+          routinesByDate[dateKey] = DEFAULT_ROUTINES.map(r => ({
+            ...r,
+            id: `rt-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+            done: false
+          }));
+        }
+      }
+      return routinesByDate[dateKey];
+    }
 
     // AUDIO CONTEXT
     let audioCtx = null;
@@ -386,10 +443,10 @@
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
-          if (parsed.routines && Array.isArray(parsed.routines) && parsed.routines.length > 0) {
-            routines = parsed.routines;
-          } else {
-            routines = JSON.parse(JSON.stringify(DEFAULT_ROUTINES));
+          if (parsed.routinesByDate && typeof parsed.routinesByDate === 'object') {
+            routinesByDate = parsed.routinesByDate;
+          } else if (parsed.routines && Array.isArray(parsed.routines)) {
+            routinesByDate[todayDate] = parsed.routines;
           }
           if (parsed.history) dailyHistory = parsed.history;
           if (parsed.streak) streakCount = parsed.streak;
@@ -397,18 +454,16 @@
           if (parsed.date && parsed.date !== todayDate) {
             handleNewDayRollover(parsed.date);
           }
-        } catch (e) {
-          routines = JSON.parse(JSON.stringify(DEFAULT_ROUTINES));
-        }
-      } else {
-        routines = JSON.parse(JSON.stringify(DEFAULT_ROUTINES));
+        } catch (e) {}
       }
+      getRoutinesForDate(todayDate);
     }
 
     function saveLocal() {
       const data = {
         date: todayDate,
-        routines: routines,
+        routinesByDate: routinesByDate,
+        routines: getRoutinesForDate(todayDate),
         history: dailyHistory,
         streak: streakCount,
         bestStreak: bestStreakCount
@@ -424,7 +479,77 @@
       } else {
         streakCount = 1;
       }
-      routines.forEach(r => r.done = false);
+      const todayList = getRoutinesForDate(todayDate);
+      todayList.forEach(r => r.done = false);
+    }
+
+    // DATE NAVIGATION FUNCTIONS
+    function switchDayOffset(offset) {
+      selectedDayOffset = offset;
+      const d = new Date();
+      d.setDate(d.getDate() + offset);
+      selectedDate = d.toISOString().split('T')[0];
+      updateDateUI();
+      render();
+      updateProgress();
+    }
+
+    function switchSpecificDate(dateStr) {
+      if (!dateStr) return;
+      selectedDate = dateStr;
+      if (selectedDate === todayDate) selectedDayOffset = 0;
+      else selectedDayOffset = -1;
+      updateDateUI();
+      render();
+      updateProgress();
+    }
+
+    function updateDateUI() {
+      // Update Tab Pill styles
+      ['today', 'tomorrow', 'next'].forEach((id, idx) => {
+        const btn = document.getElementById(`dayBtn-${id}`);
+        if (!btn) return;
+        if (selectedDayOffset === idx) {
+          btn.className = "px-3.5 py-1.5 rounded-xl bg-brand-500 text-white shadow-sm transition";
+        } else {
+          btn.className = "px-3.5 py-1.5 rounded-xl text-zinc-400 hover:text-white transition";
+        }
+      });
+
+      // Update Date Badge
+      const d = new Date(selectedDate + 'T00:00:00');
+      const formatted = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+      const badge = document.getElementById('selectedDateBadge');
+      if (badge) {
+        if (selectedDate === todayDate) badge.innerText = `Today (${formatted})`;
+        else if (selectedDayOffset === 1) badge.innerText = `Tomorrow (${formatted})`;
+        else badge.innerText = formatted;
+      }
+
+      // Update Future Day Banner
+      const banner = document.getElementById('futureDayBanner');
+      const bannerText = document.getElementById('futureDayBannerText');
+      if (banner && bannerText) {
+        if (selectedDate > todayDate) {
+          banner.classList.remove('hidden');
+          bannerText.innerText = selectedDayOffset === 1 ? 'Planning routine for Tomorrow' : `Planning routine for ${formatted}`;
+        } else {
+          banner.classList.add('hidden');
+        }
+      }
+    }
+
+    function copyScheduleFromToday() {
+      const todayRoutines = getRoutinesForDate(todayDate);
+      routinesByDate[selectedDate] = todayRoutines.map(r => ({
+        ...r,
+        id: `rt-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        done: false
+      }));
+      saveLocal();
+      render();
+      pushToSupabase();
+      alert("✅ Copied today's schedule to " + selectedDate + "!");
     }
 
     // SUPABASE PUSH
@@ -437,7 +562,8 @@
             user_id: USER_ID,
             state: {
               date: todayDate,
-              routines: routines,
+              routinesByDate: routinesByDate,
+              routines: getRoutinesForDate(todayDate),
               history: dailyHistory,
               streak: streakCount,
               bestStreak: bestStreakCount
@@ -461,14 +587,17 @@
           .single();
 
         if (data && data.state) {
-          if (Array.isArray(data.state.routines) && data.state.routines.length > 0) {
-            routines = data.state.routines;
+          if (data.state.routinesByDate && typeof data.state.routinesByDate === 'object') {
+            routinesByDate = data.state.routinesByDate;
+          } else if (Array.isArray(data.state.routines) && data.state.routines.length > 0) {
+            routinesByDate[todayDate] = data.state.routines;
           }
           if (data.state.history) dailyHistory = data.state.history;
           if (data.state.streak) streakCount = data.state.streak;
           if (data.state.bestStreak) bestStreakCount = data.state.bestStreak;
 
           saveLocal();
+          updateDateUI();
           render();
           updateProgress();
           updateCloudStatus(true);
@@ -486,13 +615,16 @@
           .channel('public:user_discipline_state')
           .on('postgres_changes', { event: '*', schema: 'public', table: 'user_discipline_state' }, payload => {
             if (payload.new && payload.new.user_id === USER_ID && payload.new.state) {
-              if (Array.isArray(payload.new.state.routines)) {
-                routines = payload.new.state.routines;
+              if (payload.new.state.routinesByDate && typeof payload.new.state.routinesByDate === 'object') {
+                routinesByDate = payload.new.state.routinesByDate;
+              } else if (Array.isArray(payload.new.state.routines)) {
+                routinesByDate[todayDate] = payload.new.state.routines;
               }
               if (payload.new.state.history) dailyHistory = payload.new.state.history;
               if (payload.new.state.streak) streakCount = payload.new.state.streak;
               if (payload.new.state.bestStreak) bestStreakCount = payload.new.state.bestStreak;
               saveLocal();
+              updateDateUI();
               render();
               updateProgress();
             }
@@ -515,10 +647,11 @@
 
     // RENDER ROUTINES
     function render() {
+      const currentList = getRoutinesForDate(selectedDate);
       const list = document.getElementById('routineList');
       const empty = document.getElementById('emptyState');
 
-      if (!routines || routines.length === 0) {
+      if (!currentList || currentList.length === 0) {
         list.innerHTML = '';
         empty.classList.remove('hidden');
         updateProgress();
@@ -526,11 +659,11 @@
       }
 
       empty.classList.add('hidden');
-      list.innerHTML = routines.map((item, index) => `
+      list.innerHTML = currentList.map((item, index) => `
         <div onclick="openDetailModal(${index})" class="group flex items-center justify-between p-4 rounded-2xl bg-zinc-900/80 hover:bg-zinc-900 border ${item.done ? 'border-zinc-800/50 bg-zinc-950/40' : 'border-zinc-800'} transition duration-150 cursor-pointer active:scale-[0.99]">
           
           <div class="flex items-center gap-3.5 flex-1 min-w-0 pr-3">
-            <!-- Custom Checkbox (stop propagation so it toggles without opening modal) -->
+            <!-- Custom Checkbox -->
             <button onclick="event.stopPropagation(); toggleRoutine(${index})" class="w-6 h-6 rounded-lg border flex items-center justify-center shrink-0 transition active:scale-90 ${item.done ? 'bg-brand-500 border-brand-500 text-white' : 'border-zinc-700 hover:border-zinc-500 bg-zinc-950'}">
               ${item.done ? '<i data-lucide="check" class="w-4 h-4 stroke-[3]"></i>' : ''}
             </button>
@@ -568,9 +701,10 @@
     let currentDetailIndex = null;
 
     function openDetailModal(index) {
-      if (typeof routines[index] === 'undefined') return;
+      const currentList = getRoutinesForDate(selectedDate);
+      if (typeof currentList[index] === 'undefined') return;
       currentDetailIndex = index;
-      const item = routines[index];
+      const item = currentList[index];
 
       document.getElementById('detailTime').innerText = item.time;
       document.getElementById('detailTitle').innerText = item.title;
@@ -618,9 +752,10 @@
 
     // TOGGLE DONE
     function toggleRoutine(index) {
-      if (!routines[index]) return;
-      routines[index].done = !routines[index].done;
-      if (routines[index].done) playClickSound();
+      const currentList = getRoutinesForDate(selectedDate);
+      if (!currentList[index]) return;
+      currentList[index].done = !currentList[index].done;
+      if (currentList[index].done) playClickSound();
       saveLocal();
       render();
       pushToSupabase();
@@ -635,7 +770,8 @@
 
       if (!time || !title) return;
 
-      routines.push({
+      const currentList = getRoutinesForDate(selectedDate);
+      currentList.push({
         id: 'rt-' + Date.now(),
         time: time,
         title: title,
@@ -656,25 +792,27 @@
 
     // DELETE ROUTINE
     function deleteRoutine(index) {
-      routines.splice(index, 1);
+      const currentList = getRoutinesForDate(selectedDate);
+      currentList.splice(index, 1);
       saveLocal();
       render();
       pushToSupabase();
     }
 
-    // RESET TICKS FOR TODAY
+    // RESET TICKS FOR CURRENT DAY
     function resetDayTicks() {
-      if (!confirm("Reset all checkmarks for today?")) return;
-      routines.forEach(r => r.done = false);
+      if (!confirm(`Reset all checkmarks for ${selectedDate}?`)) return;
+      const currentList = getRoutinesForDate(selectedDate);
+      currentList.forEach(r => r.done = false);
       saveLocal();
       render();
       pushToSupabase();
     }
 
-    // CLEAR ALL
+    // CLEAR ALL FOR CURRENT DAY
     function clearAllRoutines() {
-      if (!confirm("Delete all routines to start completely fresh?")) return;
-      routines = [];
+      if (!confirm(`Delete all routines for ${selectedDate} to start fresh?`)) return;
+      routinesByDate[selectedDate] = [];
       saveLocal();
       render();
       pushToSupabase();
@@ -848,6 +986,7 @@
         }
 
         loadLocal();
+        updateDateUI();
         render();
         pullFromSupabase();
         subscribeToRealtime();
