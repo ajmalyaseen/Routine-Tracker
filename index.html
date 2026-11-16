@@ -215,8 +215,24 @@
       supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     }
 
+    // DEFAULT SCHEDULE FALLBACK
+    const DEFAULT_ROUTINES = [
+      { id: 'rt-1', time: '06:00 AM - 06:45 AM', title: 'Wakeup, Hydrate & Light Workout', category: 'Routine', done: false },
+      { id: 'rt-2', time: '06:45 AM - 08:30 AM', title: 'Deep Work: SQL Mastery (Window Functions & CTEs)', category: 'SQL', done: false },
+      { id: 'rt-3', time: '08:30 AM - 09:15 AM', title: 'Healthy Breakfast & Energy Break', category: 'Routine', done: false },
+      { id: 'rt-4', time: '09:15 AM - 11:45 AM', title: 'Core Machine Learning & Math Foundation', category: 'ML', done: false },
+      { id: 'rt-5', time: '11:45 AM - 12:45 PM', title: 'Interview Prep: DSA & System Design', category: 'Interview', done: false },
+      { id: 'rt-6', time: '12:45 PM - 01:45 PM', title: 'Lunch & 20m Power Rest', category: 'Routine', done: false },
+      { id: 'rt-7', time: '01:45 PM - 04:15 PM', title: 'Generative AI, LLMs & RAG Engineering', category: 'GenAI', done: false },
+      { id: 'rt-8', time: '04:15 PM - 04:45 PM', title: 'Evening Walk & Screen Break', category: 'Routine', done: false },
+      { id: 'rt-9', time: '04:45 PM - 06:45 PM', title: 'Hands-on Portfolio Project & GitHub Commits', category: 'Project', done: false },
+      { id: 'rt-10', time: '06:45 PM - 07:45 PM', title: 'Daily Revision & Flashcards', category: 'Interview', done: false },
+      { id: 'rt-11', time: '07:45 PM - 09:30 PM', title: 'Dinner & Relaxation', category: 'Routine', done: false },
+      { id: 'rt-12', time: '09:30 PM - 10:00 PM', title: 'Habit Audit & 8h Sleep', category: 'Routine', done: false }
+    ];
+
     // STATE
-    let routines = [];
+    let routines = JSON.parse(JSON.stringify(DEFAULT_ROUTINES));
     let todayDate = new Date().toISOString().split('T')[0];
 
     // AUDIO CONTEXT
