@@ -589,6 +589,14 @@
       if (!routinesByDate[dateKey]) {
         routinesByDate[dateKey] = [];
       }
+      // Sort chronologically by start_time
+      routinesByDate[dateKey].sort((a, b) => {
+        const timeA = a.start_time || (a.time ? a.time.split('-')[0].trim() : '00:00');
+        const timeB = b.start_time || (b.time ? b.time.split('-')[0].trim() : '00:00');
+        const minA = parseTimeToMinutes(timeA) ?? 0;
+        const minB = parseTimeToMinutes(timeB) ?? 0;
+        return minA - minB;
+      });
       return routinesByDate[dateKey];
     }
 
@@ -1112,7 +1120,7 @@
 
               <!-- Time Pill -->
               <span class="text-xs font-mono font-medium px-2.5 py-1 rounded-md bg-zinc-950 border ${!item.done && !timeStatus.canTick && !timeStatus.isFuture ? 'border-amber-500/30 text-amber-300' : 'border-zinc-800/80 text-zinc-400'} shrink-0">
-                ${item.time}
+                ${item.start_time && item.end_time ? `${item.start_time} - ${item.end_time}` : (item.time || item.start_time || '08:00')}
               </span>
 
               <!-- Title -->
@@ -1416,6 +1424,9 @@
       const listForDate = getRoutinesForDate(dateVal);
       listForDate.push({
         id: 'rt-' + Date.now(),
+        scheduled_date: dateVal,
+        start_time: startVal,
+        end_time: endVal,
         time: formattedTime,
         title: title,
         category: tag,
